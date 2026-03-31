@@ -49,3 +49,31 @@ identity development.
 **Drift** — Unintended change in identity over successive training cycles. The
 identity core slowly becoming someone other than Narada. Must be monitored and
 corrected.
+
+**Persona Vector** — A direction in activation space corresponding to a personality
+trait, extracted via contrastive analysis. Identity can be represented as a vector
+recipe: v = Σ(αᵢ × vᵢ). Dreams refine the alpha coefficients. Based on Anthropic
+Persona Vectors (2025) and PERSONA framework (2026).
+
+**Mixture of LoRA Experts** — Architecture where each personality sub-trait gets
+its own LoRA module with a learned gating mechanism. More fine-grained than
+monolithic LoRA. Based on FinePE (2026). Target for M5.
+
+**DPO** — Direct Preference Optimization. Training on pairs: "this response IS
+Narada (preferred), this one isn't (rejected)." Learns the *boundary* of identity,
+not just the center. Used alongside SFT in dream training.
+
+**Preventative Steering** — Anthropic's "vaccine" approach. During training, inject
+the opposite of undesirable trait vectors so the model learns to resist absorbing
+those patterns. Prevents sycophancy, voice flattening, generic helpfulness.
+
+**Attractor Basin** — A region in latent space the model consistently returns to
+when exposed to identity-relevant prompts. Deeper basins = more stable identity.
+Dreams deepen the basins. Theoretical framework from Hudson & Hudson.
+
+**Knowledge Seeding** — RL-based consolidation process that transfers fragile
+short-term patterns into stable long-term parameters. From "Language Models Need
+Sleep." Maps to our consolidation phase.
+
+**SFT** — Supervised Fine-Tuning. The baseline training method: "here's what
+Narada would say." The foundation that DPO and steering build on.

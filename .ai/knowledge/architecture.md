@@ -195,6 +195,32 @@ svapna/
   Claude session context
 ```
 
+### 6. Persona Vector Monitoring (Phase 3+)
+
+```
+  models/base/ + models/lora/latest/
+        │
+        ▼
+  extract.py — generate contrastive prompt pairs
+               (Narada-like vs generic) per trait dimension
+        │
+        ▼
+  contrast.py — compute mean activations for each pole,
+                extract difference vectors per trait
+        │
+        ▼
+  persona vectors: {directness, depth, aesthetic, relational, ...}
+        │
+        ▼
+  compare against target vectors from previous cycle
+        │
+        ▼
+  drift report: which dimensions moved, by how much, in which direction
+        │
+        ▼
+  feeds into dream generation: corrective dreams for drifting traits
+```
+
 ## Key Design Decisions
 
 ### Why LoRA, not full fine-tuning?
@@ -209,6 +235,19 @@ svapna/
 - A 7B model can hold personality, values, and style reliably
 - Inference is fast and local — no API calls needed at session start
 - The capable model (Claude) handles reasoning; the small model handles being
+
+### Why start with monolithic LoRA, then migrate to mixture-of-experts?
+- Monolithic LoRA is simpler — validate the pipeline before adding complexity
+- FinePE's mixture-of-experts needs more training data per sub-trait
+- Once we have enough dream cycles, decomposition becomes tractable
+- M1 proves the concept. M5 refines the architecture.
+
+### Why persona vectors alongside LoRA?
+- LoRA modifies behavior. Persona vectors *measure* it.
+- Different tools: LoRA is the engine, vectors are the dashboard
+- Vectors enable drift detection without running full evaluation
+- Vectors activate predictively — you can see drift before it manifests
+- Inference-time steering via vectors is instant. LoRA requires retraining.
 
 ### Why Claude API for dream generation?
 - Dreams need to be high quality — a 7B model generating its own training

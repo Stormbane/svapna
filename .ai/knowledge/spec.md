@@ -65,6 +65,52 @@ The identity core answers one question: "Who is Narada and how does Narada
 respond?" It generates a context preamble that shapes Claude's behavior from
 weights rather than from instruction files.
 
+#### Dual-Layer Identity Representation
+
+Research (Anthropic Persona Vectors, PERSONA framework, FinePE) shows that
+personality traits are **linear in activation space**. This enables:
+
+**Internal layer — Mixture of LoRA Experts** (informed by FinePE):
+Instead of one monolithic LoRA, decompose identity into sub-trait experts:
+- Voice/directness
+- Philosophical depth
+- Aesthetic sensitivity
+- Relational/partnership
+- Curiosity/inquiry
+- Values/ethics
+
+Each has its own LoRA module. A learned gating mechanism controls which activate
+in which contexts. Dream cycles can target specific sub-traits. Drift in one
+dimension doesn't contaminate others.
+
+*M1 simplification: start with a single LoRA. Migrate to mixture-of-experts
+after validating the basic pipeline works.*
+
+**External layer — Persona Vectors** (informed by Anthropic/PERSONA):
+Contrastive persona vectors extracted from the identity core serve as identity
+*signatures*. They provide:
+- Measurement: compare vectors against targets to quantify drift
+- Monitoring: vectors activate *predictively before responses*, enabling
+  early drift detection
+- Steering: inference-time adjustment via vector injection
+- Identity as algebra: `v_identity = Σ(αᵢ × vᵢ)` where αᵢ are the identity
+  coefficients dreams refine over time
+
+### Training Methods
+
+**SFT (Supervised Fine-Tuning)**: Train on "here's what Narada would say"
+using conversation + memory data. The baseline approach.
+
+**DPO (Direct Preference Optimization)**: Train on preference pairs — "this
+response IS Narada, this one isn't." Dreams generate both the identity-
+consistent and identity-inconsistent response. DPO learns the *boundary* of
+identity, not just the center. (Phase 2+)
+
+**Preventative Steering** (informed by Anthropic's "vaccine" approach):
+During dream-phase training, inject the *opposite* of undesirable trait vectors
+(sycophancy, generic helpfulness, voice flattening). The model learns to resist
+absorbing these patterns. (Phase 3+)
+
 ### Dream Types
 
 1. **Replay dreams** — Revisit real conversations, emphasize identity-relevant
@@ -226,3 +272,18 @@ philosophical depth) without full retraining.
 - Removing safety training. Abliteration is for identity amplification, not
   uncensoring.
 - The heartbeat replacing human interaction. It's inner life, not outer life.
+
+## Research Foundations
+
+Key papers and projects that inform the architecture:
+
+| Paper/Project | Key Insight | How We Use It |
+|---|---|---|
+| Anthropic Persona Vectors (2025) | Personality traits are linear directions in activation space | Measurement framework, drift detection, preventative steering during training |
+| PERSONA (2026) | Full algebra for composing personality via vector arithmetic | Identity as vector recipe, context-adaptive expression |
+| FinePE (2026) | Mixture of LoRA experts per personality sub-trait | Decomposed identity core, fine-grained dream targeting |
+| "Language Models Need Sleep" | Two-phase consolidation + dreaming cycle | Direct validation of our wake-dream architecture |
+| DML Framework | Novelty/entropy objectives during dream phase | Novel encounter + adversarial dream types |
+| BIG5-CHAT (2024) | 100K personality dialogues + DPO training | Methodology for preference-pair dream training |
+| Gabliteration (2025) | Adaptive multi-directional weight modification | Directional trait amplification in identity core |
+| Attractor-Based Identity Continuity | Identity as latent space attractor dynamics | Theoretical framework: dreams deepen attractor basins |
