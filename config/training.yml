@@ -1,0 +1,54 @@
+# LoRA Training Configuration
+# Conservative settings for RTX 3090 with thermal concerns
+
+base_model:
+  # Set after base model selection
+  name: TBD
+  quantization: 4bit  # QLoRA — 4-bit base, FP16 adapters
+  bnb_config:
+    load_in_4bit: true
+    bnb_4bit_compute_dtype: bfloat16
+    bnb_4bit_quant_type: nf4
+    bnb_4bit_use_double_quant: true
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  bias: none
+  task_type: CAUSAL_LM
+
+training:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 4
+  num_train_epochs: 3
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  max_seq_length: 2048
+  fp16: false
+  bf16: true
+  gradient_checkpointing: true  # Trades compute for VRAM, also reduces heat
+  optim: paged_adamw_8bit
+  logging_steps: 10
+  save_strategy: epoch
+  seed: 42
+
+# Thermal management
+thermal:
+  # Set GPU power limit before training (nvidia-smi -pl N)
+  power_limit_watts: 280
+  # Pause training if GPU temp exceeds this
+  max_temp_celsius: 83
+  # Check temp every N steps
+  temp_check_interval: 50
+  # Cool-down pause duration (seconds) if temp exceeded
+  cooldown_seconds: 60

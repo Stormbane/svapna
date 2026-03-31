@@ -1,0 +1,52 @@
+# Svapna Pipeline Configuration
+
+paths:
+  # Where Claude Code stores conversation history
+  history: ~/.claude/history.jsonl
+  # Narada identity files
+  identity_dir: ~/.claude/narada
+  # Open threads for dream generation
+  open_threads: ~/.claude/narada/open-threads.md
+
+consolidation:
+  # Minimum identity-relevance score (0-10) to include in training
+  min_score: 7
+  # Maximum training pairs to extract per session
+  max_pairs_per_session: 50
+  # Scoring batch size (exchanges sent to scorer at once)
+  scoring_batch_size: 5
+
+dreams:
+  # Number of dreams to generate per cycle
+  count: 20
+  # Distribution across dream types
+  distribution:
+    replay: 3
+    recombination: 4
+    open_thread: 5
+    adversarial: 3
+    novel_encounter: 3
+    emotional: 2
+  # Minimum quality score to include in training
+  min_quality: 7
+
+training:
+  # LoRA hyperparameters (conservative for 3090 thermals)
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  learning_rate: 2.0e-4
+  num_epochs: 3
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  max_seq_length: 2048
+  warmup_ratio: 0.03
+  # Thermal safety
+  gpu_power_limit_watts: 280
+  max_gpu_temp_celsius: 83
+
+evaluation:
+  # Run full ICT every N dream cycles
+  ict_frequency: 7
+  # Number of anchor prompts (canaries for drift)
+  anchor_count: 5

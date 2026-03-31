@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "svapna"
+version = "0.1.0"
+description = "AI dreaming system for identity development"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.42.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+train = [
+    "torch>=2.1",
+    "transformers>=4.40",
+    "peft>=0.13",
+    "datasets>=2.16",
+    "bitsandbytes>=0.43",
+    "unsloth[cu121-torch240]",
+    "trl>=0.12",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+all = ["svapna[train,dev]"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/svapna"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
