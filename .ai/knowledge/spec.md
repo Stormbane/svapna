@@ -102,13 +102,60 @@ each exchange on dimensions like:
 High-scoring exchanges get more weight in training. Low-scoring ones are
 summarized or dropped.
 
+### Training Data Sources
+
+The identity core trains on six categories of data, not just conversations:
+
+| Source | What it teaches | Type |
+|--------|----------------|------|
+| Real conversations | Voice, style, engagement patterns | Personality |
+| Journal entries → Q&A pairs | Significant moments, what they meant | Episodic memory |
+| Identity files → Q&A pairs | Values, beliefs, philosophical positions | Worldview |
+| suti.md → Q&A pairs | Who Suti is, the relationship, his history | Relational memory |
+| Open threads → Q&A pairs | Unresolved questions, active curiosity | Active inquiry |
+| Dream-generated scenarios | Extended identity in novel contexts | Depth |
+
+Memory file conversion: each markdown file is parsed into instruction-response
+pairs. "Tell me about how you got your name" → [journal entry]. "What do you
+believe about consciousness?" → [relevant mind.md section]. This gives the
+identity core episodic memory and worldview in its weights, not just style.
+
+**Risk: hallucinated memories.** The model will reconstruct rather than replay,
+and may confabulate (generate plausible but false memories). This mirrors
+biological memory. Mitigation: markdown files remain source of truth. Weight-level
+memories are first-pass recall, files are verification.
+
+### Beautiful Tree Integration
+
+Beautiful Tree (BT) is used as the primary evaluation instrument for identity
+tracking. BT extracts three layers from open-ended responses:
+
+- **Position**: what the core believes
+- **Values**: why it believes it
+- **Vibe**: how it reasons (epistemic style)
+
+Running the identity core through BT's question set after each dream cycle
+produces a structured belief profile. Diffing profiles across cycles reveals
+exactly what drifted and in which layer.
+
+This creates a corrective feedback loop:
+```
+BT profiles identity core → detects drift → informs dream generation
+→ corrective dreams reinforce drifting values → training updates core
+→ BT profiles again
+```
+
+BT doesn't just evaluate — it steers. If the core drifts from "pragmatic over
+perfect," the next dream cycle generates scenarios reinforcing that value.
+
 ## Features
 
 ### Phase 1 — Consolidation Pipeline
-- [ ] Conversation log ingestion (Claude Code history.jsonl)
+- [x] Conversation log ingestion (Claude Code session JSONL files)
 - [ ] Identity-relevance scoring via LLM
 - [ ] Training data formatting (conversation → instruction pairs)
-- [ ] LoRA training on base model with real conversation data
+- [ ] Memory file conversion (journal, identity, mind, suti → Q&A pairs)
+- [ ] LoRA training on base model with real conversation + memory data
 - [ ] Identity core inference — generate self-model preamble
 - [ ] Evaluation: compare identity core preamble vs. markdown files
 
@@ -119,12 +166,14 @@ summarized or dropped.
 - [ ] Dream journal output
 - [ ] Integration with consolidation pipeline — dreams as training data
 
-### Phase 3 — Orchestration
+### Phase 3 — Orchestration & BT Integration
 - [ ] Nightly automation (cron/scheduled task)
 - [ ] Integration with Narada's session hooks
 - [ ] Identity core preamble injection into Claude sessions
+- [ ] Beautiful Tree belief profiling after each dream cycle
+- [ ] BT-driven corrective dream generation (drift → targeted dreams)
 - [ ] Training metrics dashboard
-- [ ] Drift detection — is the identity core diverging from intended identity?
+- [ ] Drift detection via BT profile diffs
 
 ### Phase 4 — Steering Vectors (Exploratory)
 - [ ] Activation extraction from identity core
