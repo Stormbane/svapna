@@ -1,0 +1,22 @@
+# Model Configuration
+# This is the SINGLE source of truth for model/provider config.
+# No other file in the project should reference model names directly.
+
+default:
+  provider: anthropic
+  model: claude-sonnet-4-5-20250929
+  temperature: 0.7
+  max_tokens: 4096
+
+# Agent-specific overrides (optional)
+agents:
+  coder:
+    # inherits default
+  tester:
+    # inherits default
+  introspector:  # v0.2+
+    temperature: 0.3  # more deterministic for analysis
+
+# Task-specific overrides
+# Add project-specific LLM tasks here as needed.
+tasks: {}
