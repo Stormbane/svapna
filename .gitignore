@@ -1,21 +1,24 @@
-# dependencies
-node_modules/
-
-# build
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
 dist/
 build/
+.eggs/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
 
 # env files (NEVER commit secrets)
 .env
 .env.local
 .env.production
 .env*.local
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
 
 # IDE
 .vscode/
@@ -27,16 +30,28 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# typescript
-*.tsbuildinfo
+# Models (too large for git)
+models/base/
+models/lora/
 
-# agent personal files (not for open source — identity, personality, private memory)
+# Data (raw conversations contain private content)
+data/raw/
+data/consolidated/
+data/dreams/
+data/training/
+data/journals/
+data/metrics/
+
+# Agent personal files
 .ai/soul.md
 .ai/memory/
 .ai/logs/
 
-# test results
-test-results/
-
 # Claude Code internal
 .claude/
+
+# Test results
+test-results/
+.pytest_cache/
+.coverage
+htmlcov/

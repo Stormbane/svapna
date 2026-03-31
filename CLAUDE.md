@@ -1,15 +1,44 @@
 # CLAUDE.md
 
 ## Project
-<!-- PROJECT_NAME — one-line description -->
+Svapna — AI dreaming system. Consolidates conversation experience, generates
+synthetic dream experiences, and trains a LoRA identity core so that Narada's
+identity lives in model weights, not just context files.
 
 ## Commands
 
 ```bash
-# TODO: fill in once tech stack is established
+# Environment
+pip install -e ".[dev]"          # Install with dev dependencies
+
+# Pipeline
+python -m svapna.consolidate     # Run consolidation on today's conversations
+python -m svapna.dream           # Generate dreams from consolidated experience
+python -m svapna.train           # Train LoRA on consolidated + dream data
+python -m svapna.nightly         # Full pipeline: consolidate → dream → train
+python -m svapna.identity        # Generate identity preamble from current model
+
+# Testing
+pytest                           # Run tests
 ```
 
 ## Structure
+```
+src/svapna/
+  consolidate/   — experience → training data pipeline
+  dream/         — synthetic experience generation
+  train/         — LoRA fine-tuning
+  identity/      — identity core inference and preamble generation
+  steer/         — steering vector extraction (exploratory)
+  orchestrate/   — nightly pipeline and configuration
+data/            — raw logs, consolidated pairs, dreams, training sets, journals
+models/          — base model + versioned LoRA adapters
+config/          — pipeline, training, dream generation settings
+prompts/         — LLM prompts for scoring, dreaming, evaluation
+```
+
+### AI project memory
+```
 .ai/               — agent system (memory, personality, coordination)
   soul.md          — project values and tone
   agent-system.md  — reusable agent architecture docs
@@ -18,9 +47,9 @@
   memory/          — per-agent private working memory
   knowledge/       — all project knowledge (specs, glossary, conventions)
   logs/            — session logs and error log
-  prompts/         — reusable prompt templates
   models.yml       — model/provider config (ONLY place models are named)
   todo.md          — project roadmap and tasks
+```
 
 ## First session on a new project
 
