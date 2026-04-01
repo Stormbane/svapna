@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 2,
+    "completed": 3,
     "total": 12
   },
   "features": [
@@ -39,7 +39,7 @@
     {
       "id": 3,
       "title": "Dream generation pipeline",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/dream/generate.py. Uses Claude API to generate synthetic conversations from dream templates. Takes the pipeline config (dream count, distribution across types) and produces dream conversations in the same Exchange-like format as real conversations. Handles API rate limiting and errors.",
       "test_cases": [
         "Generates requested number of dreams",
