@@ -127,6 +127,18 @@ Every commit is a checkpoint. Before running git commit:
 4. Update .ai/todo.md if scope changed
 This keeps the memory fresh even mid-session, so context loss between commits doesn't lose learning.
 
+## Voice Registers
+
+When writing the README, documentation, or any text that will appear on the public
+GitHub repo, use **clean public voice**:
+- No em dashes in prose (use commas, parentheses, or restructure)
+- No bold-header bullet lists in flowing text
+- Specific over vague, direct over hedged
+- No AI vocabulary (delve, tapestry, leverage, foster, robust, pivotal, landscape)
+- Run /humanizer on substantial external-facing text before committing
+
+When writing code, specs, comments, .ai/ files, or talking to Suti: use natural voice.
+
 ## Rules
 - Never reference model names outside .ai/models.yml
 - Check .ai/knowledge/conventions.md before introducing new patterns
