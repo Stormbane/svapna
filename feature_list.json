@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 10,
+    "completed": 11,
     "total": 12
   },
   "features": [
@@ -151,7 +151,7 @@
     {
       "id": 11,
       "title": "CLI entry points for all modules",
-      "status": "pending",
+      "status": "completed",
       "description": "Create __main__.py entry points for dream and identity modules so they can be run as 'python -m svapna.dream', 'python -m svapna.identity', etc. The consolidate module already has one. Each should have argparse with sensible defaults from config files.",
       "test_cases": [
         "python -m svapna.dream --help shows usage",
