@@ -24,8 +24,9 @@ evaluator:
 # The identity core — local model, fine-tuned via LoRA
 identity_core:
   provider: local
-  base_model: TBD  # Will be set after base model selection
-  quantization: TBD
+  base_model: unsloth/Qwen3-8B-unsloth-bnb-4bit
+  quantization: 4bit
+  enable_thinking: false
   lora_adapter: models/lora/latest
 
 # Agent-specific overrides

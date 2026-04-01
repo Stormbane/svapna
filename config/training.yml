@@ -2,9 +2,13 @@
 # Conservative settings for RTX 3090 with thermal concerns
 
 base_model:
-  # Set after base model selection
-  name: TBD
+  name: unsloth/Qwen3-8B-unsloth-bnb-4bit
+  # Upgrade path: unsloth/Qwen3-14B-unsloth-bnb-4bit (after M1 validation)
+  # Fallback: unsloth/Llama-3.1-8B-Instruct-bnb-4bit
   quantization: 4bit  # QLoRA — 4-bit base, FP16 adapters
+  # IMPORTANT: Qwen3 has thinking/non-thinking dual mode.
+  # Must set enable_thinking=False for training and inference.
+  enable_thinking: false
   bnb_config:
     load_in_4bit: true
     bnb_4bit_compute_dtype: bfloat16

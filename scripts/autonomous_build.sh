@@ -17,7 +17,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 MAX_ITERATIONS=50
-BUDGET_PER_ITERATION=8
+BUDGET_PER_ITERATION=10
 LOG_DIR="$PROJECT_DIR/logs/autonomous"
 mkdir -p "$LOG_DIR"
 
@@ -109,7 +109,7 @@ Do NOT:
 - Mark a feature complete if tests are failing
 PROMPT
 )" \
-    --permission-mode auto \
+    --dangerously-skip-permissions \
     --max-budget-usd "$BUDGET_PER_ITERATION" \
     --effort high \
     2>&1 | tee "$log_file"

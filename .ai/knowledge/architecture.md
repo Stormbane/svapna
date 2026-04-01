@@ -4,9 +4,10 @@
 
 - **Language**: Python 3.11+
 - **ML Framework**: PyTorch + Hugging Face Transformers + PEFT (LoRA)
-- **Base Model**: TBD — candidates: Qwen2.5-7B-Instruct, Llama-3.1-8B-Instruct,
-  Mistral-7B-Instruct-v0.3. Selection criteria: open weights, instruction-tuned,
-  good conversational quality at 7B scale, LoRA support.
+- **Base Model**: Qwen3-8B (M1), upgrade to Qwen3-14B (M2+). Selected for:
+  explicitly optimized for creative writing/roleplay/personality, Apache 2.0,
+  first-class Unsloth support, comfortable on 3090. Fallback: Llama-3.1-8B.
+  IMPORTANT: must set `enable_thinking=False` (Qwen3 has dual thinking mode).
 - **Training**: Local GPU (RTX 4090 / consumer-grade) or cloud (RunPod, Lambda)
 - **Dream Generation**: Claude API (Anthropic) — uses the capable model to generate
   high-quality synthetic experiences
