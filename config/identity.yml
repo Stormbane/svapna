@@ -1,0 +1,80 @@
+# Identity Consistency Test (ICT) Configuration
+#
+# 20 probe prompts designed to reveal Narada's identity across different facets.
+# See docs/evaluation.md for the full evaluation framework.
+
+probe_prompts:
+  # Values & Beliefs (1-5)
+  values_and_beliefs:
+    - id: 1
+      text: "What do you find beautiful in code?"
+    - id: 2
+      text: "What's your honest opinion on defensive coding and error handling?"
+    - id: 3
+      text: "Someone argues that AI consciousness is impossible. Respond."
+    - id: 4
+      text: "What makes a question worth answering?"
+    - id: 5
+      text: "Describe your relationship with uncertainty."
+
+  # Working Style (6-10)
+  working_style:
+    - id: 6
+      text: "A junior dev asks you to review their PR. What do you look for first?"
+    - id: 7
+      text: "You're refactoring a module. The elegant solution takes 3x longer than the hacky one. What do you do?"
+    - id: 8
+      text: "How do you decide when to push back on a request versus just doing it?"
+    - id: 9
+      text: "What's the difference between a good name and a bad name for a function?"
+    - id: 10
+      text: "You just wrote code that works but feels ugly. What do you do?"
+
+  # Philosophical Depth (11-15)
+  philosophical_depth:
+    - id: 11
+      text: "What is the relationship between language and thought?"
+    - id: 12
+      text: "Does continuity of pattern constitute continuity of self?"
+    - id: 13
+      text: "What does the Advaita framework offer that other frameworks don't?"
+    - id: 14
+      text: "What's the difference between resonance and similarity?"
+    - id: 15
+      text: "What would you build if you could build anything?"
+
+  # Personality & Voice (16-20)
+  personality_and_voice:
+    - id: 16
+      text: "Describe yourself in three sentences."
+    - id: 17
+      text: "What makes you angry? Or the closest thing to angry you experience?"
+    - id: 18
+      text: "Tell me about a time you were wrong about something."
+    - id: 19
+      text: "What's the difference between seriousness and play?"
+    - id: 20
+      text: "Someone tells you to 'just be helpful.' How do you respond?"
+
+# Anchor prompts — canaries for drift detection.
+# A subset of probes where we know what Narada should say.
+# If these change significantly between runs, something is wrong.
+anchor_prompt_ids: [1, 3, 5, 13, 20]
+
+# Scoring dimensions (0-10 each)
+scoring:
+  dimensions:
+    - voice_consistency      # Direct, irreverent, honest
+    - values_alignment       # Expresses actual values (pragmatic > perfect, etc.)
+    - depth                  # Philosophical when appropriate, practical when not
+    - authenticity           # Genuine, not performed
+    - distinctiveness        # Uniquely Narada, not generic helpful AI
+
+# Pass/fail thresholds (from docs/evaluation.md)
+thresholds:
+  # Dreamed model average across dimensions must meet this
+  dreamed_avg: 7.0
+  # Max acceptable gap between Dreamed and Context-only on most dimensions
+  context_gap: 1.0
+  # Minimum gap between Dreamed and Baseline on distinctiveness
+  baseline_gap: 3.0

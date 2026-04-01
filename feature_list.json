@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 7,
+    "completed": 8,
     "total": 12
   },
   "features": [
@@ -108,7 +108,7 @@
     {
       "id": 8,
       "title": "ICT evaluation runner",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/evaluate/__init__.py and src/svapna/evaluate/ict.py. Implements the Identity Consistency Test from docs/evaluation.md. Runs the 20 probe prompts against the identity core, scores responses on 5 dimensions (voice consistency, values alignment, depth, authenticity, distinctiveness) using Claude as blind evaluator. Produces a structured report.",
       "test_cases": [
         "Loads 20 probe prompts from config",
