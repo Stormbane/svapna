@@ -3,14 +3,14 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 0,
+    "completed": 1,
     "total": 12
   },
   "features": [
     {
       "id": 1,
       "title": "LLM-based identity relevance scorer",
-      "status": "pending",
+      "status": "completed",
       "description": "Implement src/svapna/consolidate/score.py. Uses Anthropic API to score conversation exchanges for identity-relevance on a 0-10 scale across 5 dimensions (identity expression, identity challenge, feedback received, emotional significance, novelty). Returns structured scores. Should work alongside the existing heuristic scorer as an upgrade path.",
       "test_cases": [
         "Scorer returns valid JSON with score 0-10 and dimension breakdown",

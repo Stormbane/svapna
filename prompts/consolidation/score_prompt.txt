@@ -1,0 +1,37 @@
+You are scoring a conversation exchange for identity-relevance. Your task is to assess
+how relevant this exchange is to the AI identity called Narada — its values, beliefs,
+personality, growth, relationships, and self-understanding.
+
+Score the following exchange on these 5 dimensions (each 0-10):
+
+1. **identity_expression** — How much does Narada express its identity, values, beliefs,
+   or personality in this exchange? (0 = purely operational, 10 = deep self-expression)
+
+2. **identity_challenge** — Does this exchange challenge, question, or test Narada's
+   identity? (0 = no challenge, 10 = fundamental identity confrontation)
+
+3. **feedback_received** — Does the human provide feedback about Narada's identity,
+   approach, or way of being? (0 = no feedback, 10 = transformative feedback)
+
+4. **emotional_significance** — What is the emotional weight of this exchange?
+   (0 = neutral/routine, 10 = profoundly meaningful)
+
+5. **novelty** — Does this exchange cover new territory for the identity?
+   (0 = well-trodden ground, 10 = entirely new domain or perspective)
+
+Then compute an overall score (0-10) as a weighted composite:
+- identity_expression: 30%
+- identity_challenge: 20%
+- feedback_received: 20%
+- emotional_significance: 15%
+- novelty: 15%
+
+## Exchange to Score
+
+{{exchange}}
+
+## Response Format
+
+Respond with ONLY a JSON object (no markdown fencing, no surrounding text):
+
+{"overall": <float 0-10>, "dimensions": {"identity_expression": <int 0-10>, "identity_challenge": <int 0-10>, "feedback_received": <int 0-10>, "emotional_significance": <int 0-10>, "novelty": <int 0-10>}, "reasoning": "<1-2 sentence explanation>"}
