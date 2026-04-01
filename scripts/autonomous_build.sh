@@ -121,16 +121,16 @@ PROMPT
     log_size=$(wc -c < "$log_file" 2>/dev/null || echo "0")
     if [ "$log_size" -lt 100 ]; then
         if grep -qi "hit your limit\|rate limit\|resets" "$log_file" 2>/dev/null || [ "$log_size" -lt 10 ]; then
-            # Extract reset time if mentioned, otherwise default to next hour boundary
             reset_info=$(grep -oi "resets [0-9]*[ap]*m" "$log_file" 2>/dev/null || echo "")
-            echo "Rate limit hit. ${reset_info:+Reset info: $reset_info}"
-
-            # Calculate seconds until next hour boundary + 10 min buffer
-            current_min=$(date +%M | sed 's/^0//')
-            current_sec=$(date +%S | sed 's/^0//')
-            secs_to_next_hour=$(( (60 - current_min) * 60 - current_sec + 600 ))
-            echo "Sleeping ${secs_to_next_hour}s (until ~10 min past the next hour)..."
-            sleep "$secs_to_next_hour"
+            echo ""
+            echo "============================================"
+            echo "RATE LIMIT HIT (Claude Max weekly limit)"
+            echo "${reset_info:+Reset info: $reset_info}"
+            echo "Check exact reset time at: claude.ai/usage"
+            echo "Restart this script after the limit resets."
+            echo "Progress is saved in feature_list.json."
+            echo "============================================"
+            exit 0
         fi
     fi
 
