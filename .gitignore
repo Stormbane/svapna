@@ -42,6 +42,9 @@ data/training/
 data/journals/
 data/metrics/
 
+# Evaluations are TRACKED (identity evolution record)
+# data/evaluations/ is NOT gitignored
+
 # Agent personal files
 .ai/soul.md
 .ai/memory/
