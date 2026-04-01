@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 6,
+    "completed": 7,
     "total": 12
   },
   "features": [
@@ -94,7 +94,7 @@
     {
       "id": 7,
       "title": "Identity core inference module",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/identity/__init__.py and src/svapna/identity/generate.py. Loads the base model + LoRA adapter and generates an identity preamble in response to self-knowledge prompts. The preamble is what gets injected into Claude's context at session start. Also create src/svapna/identity/inject.py that formats the preamble for the SessionStart hook.",
       "test_cases": [
         "generate.py can load a model path and LoRA adapter path",
