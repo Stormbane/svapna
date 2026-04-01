@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 1,
+    "completed": 2,
     "total": 12
   },
   "features": [
@@ -24,7 +24,7 @@
     {
       "id": 2,
       "title": "Dream generation prompt templates",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/dream/templates.py with prompt templates for all 7 dream types: replay, recombination, open_thread, adversarial, novel_encounter, emotional, voice. Each template takes identity context and recent experiences as input and produces a prompt for Claude API to generate a synthetic conversation. Templates should be parameterized and produce varied, high-quality dreams.",
       "test_cases": [
         "Each dream type has a template that produces a valid prompt string",
