@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 4,
+    "completed": 5,
     "total": 12
   },
   "features": [
@@ -66,7 +66,7 @@
     {
       "id": 5,
       "title": "Dream journal writer",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/dream/journal.py. Converts scored dreams into human-readable markdown journal entries. Each night's dreams get a single journal file with date, dream summaries, notable moments, and training statistics.",
       "test_cases": [
         "Produces valid markdown with date header",
