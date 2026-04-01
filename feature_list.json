@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 8,
+    "completed": 9,
     "total": 12
   },
   "features": [
@@ -122,7 +122,7 @@
     {
       "id": 9,
       "title": "Drift detection module",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/evaluate/drift.py. Compares ICT results across multiple evaluation runs to detect identity drift. Implements red flags from docs/evaluation.md: generic preamble, values inversion, voice flattening, sycophancy increase, loss of uncertainty. Uses anchor prompts as canaries.",
       "test_cases": [
         "Can load and compare two ICT result files",
