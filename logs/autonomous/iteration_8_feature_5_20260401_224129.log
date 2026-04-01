@@ -1,0 +1,7 @@
+Feature #5 done. Committed as `b394040`.
+
+**What was built:**
+- `src/svapna/dream/journal.py` — converts scored dreams into readable markdown journal entries, grouped by dream type, with blockquoted summaries, score breakdowns, notable moments, and a training statistics table
+- `tests/test_dream_journal.py` — 29 tests covering all 4 test cases: date headers, per-type sections, score/training-selection display, and readability (blockquotes, notable moments, type descriptions)
+
+All 154 tests pass (29 new + 125 existing).

@@ -110,7 +110,6 @@ Do NOT:
 PROMPT
 )" \
     --dangerously-skip-permissions \
-    --max-budget-usd "$BUDGET_PER_ITERATION" \
     --effort high \
     2>&1 | tee "$log_file"
 

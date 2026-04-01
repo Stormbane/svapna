@@ -1,0 +1,15 @@
+Feature #2 done. Here's what was implemented:
+
+**Files created:**
+- `src/svapna/dream/__init__.py` — module init
+- `src/svapna/dream/templates.py` — 7 dream type templates with `DreamType` enum, `DreamTemplate` dataclass, and `render_dream_prompt()` convenience function
+- `tests/test_dream_templates.py` — 48 tests covering all 6 specified test cases
+
+**Design:**
+- `DreamType` is a `str` enum (works as plain string in configs)
+- `DreamTemplate` is a frozen dataclass with `render(identity_context, recent_experiences) -> (system, user)` returning a prompt pair ready for the Claude API
+- Templates use `{identity_context}` and `{experiences}` placeholders via `str.format()`
+- `AI_VOCAB_BLOCKLIST` enforced in tests — no template contains words like "delve", "tapestry", "leverage", etc.
+- Registry pattern with `get_template()`, `get_all_templates()`, and `render_dream_prompt()` public API
+
+**Test results:** 76/76 pass (48 new + 28 existing).

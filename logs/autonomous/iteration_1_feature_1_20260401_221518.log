@@ -1,0 +1,20 @@
+Feature #1 is done. Here's what was implemented:
+
+**3 files created:**
+
+- **`prompts/consolidation/score_prompt.txt`** — Prompt template that instructs the LLM to score exchanges across 5 identity-relevance dimensions with weighted composite scoring
+- **`src/svapna/consolidate/score.py`** — The scorer module with:
+  - `ScorerConfig` — loads model config from `.ai/models.yml` (no hardcoded model names)
+  - `ScoreDimensions` / `ExchangeScore` — structured score dataclasses
+  - `score_exchange()` — scores a single exchange with exponential backoff retry
+  - `score_batch()` — processes multiple exchanges with shared client, returning `None` for failures
+  - `_parse_score_response()` — extracts JSON from LLM output
+- **`tests/test_score.py`** — 17 tests covering all 5 test cases:
+  - Valid JSON parsing with dimension breakdown
+  - High-identity exchanges score >= 7
+  - Low-identity exchanges score <= 5
+  - API error retry logic (success after retry, exhausted retries, malformed JSON retry)
+  - Batch processing (all succeed, partial failure)
+  - Plus config loading, exchange formatting, and prompt substitution
+
+All 17 tests pass. Feature status updated in `feature_list.json` (1/12 completed).

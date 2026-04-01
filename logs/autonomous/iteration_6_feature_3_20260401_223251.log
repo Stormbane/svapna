@@ -1,0 +1,19 @@
+Done. Feature #3 implemented and committed.
+
+**What was built:**
+
+- **`src/svapna/dream/generate.py`** — Dream generation pipeline with:
+  - `GeneratorConfig` — loads model from `.ai/models.yml`, distribution from `config/pipeline.yml`
+  - `DreamTurn` / `Dream` dataclasses for structured dream data
+  - `parse_dream_response()` — parses `Human:`/`Assistant:` conversation format from API responses
+  - `generate_dream()` — generates a single dream with retry and exponential backoff
+  - `generate_batch()` — generates dreams matching the configured type distribution, continuing past individual failures
+
+- **`tests/test_dream_generate.py`** — 27 tests covering all 5 required test cases:
+  1. Generates requested number of dreams
+  2. Distribution across dream types matches config
+  3. Each dream is a valid conversation with human and assistant turns
+  4. Dreams reference identity context appropriately
+  5. Handles API errors with retry and backoff
+
+All 103 tests pass (27 new + 76 existing).
