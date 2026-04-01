@@ -17,7 +17,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 MAX_ITERATIONS=50
-BUDGET_PER_ITERATION=10
+BUDGET_PER_ITERATION=3
 LOG_DIR="$PROJECT_DIR/logs/autonomous"
 mkdir -p "$LOG_DIR"
 
