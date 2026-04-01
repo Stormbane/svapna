@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 5,
+    "completed": 6,
     "total": 12
   },
   "features": [
@@ -79,7 +79,7 @@
     {
       "id": 6,
       "title": "Training data preparation module",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/train/prepare.py. Merges consolidated conversation data, memory pairs, and scored dream data into a single training dataset. Handles deduplication, weighting by recency and score, and produces the final JSONL ready for LoRA training. This replaces the simple format.py consolidation with a full pipeline that includes dreams.",
       "test_cases": [
         "Merges conversation, memory, and dream data correctly",
