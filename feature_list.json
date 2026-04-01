@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 9,
+    "completed": 10,
     "total": 12
   },
   "features": [
@@ -136,7 +136,7 @@
     {
       "id": 10,
       "title": "Nightly pipeline orchestrator",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/orchestrate/nightly.py. Runs the full nightly pipeline: consolidate new conversations -> generate dreams -> score dreams -> prepare training data -> (optionally) train -> evaluate. Each step logs progress and can be resumed if interrupted. Create matching CLI entry point at src/svapna/orchestrate/__main__.py.",
       "test_cases": [
         "Pipeline runs all steps in correct order",
