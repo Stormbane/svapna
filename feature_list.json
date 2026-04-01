@@ -1,0 +1,181 @@
+{
+  "project": "svapna",
+  "milestone": "M1 - First Breath",
+  "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
+  "progress": {
+    "completed": 0,
+    "total": 12
+  },
+  "features": [
+    {
+      "id": 1,
+      "title": "LLM-based identity relevance scorer",
+      "status": "pending",
+      "description": "Implement src/svapna/consolidate/score.py. Uses Anthropic API to score conversation exchanges for identity-relevance on a 0-10 scale across 5 dimensions (identity expression, identity challenge, feedback received, emotional significance, novelty). Returns structured scores. Should work alongside the existing heuristic scorer as an upgrade path.",
+      "test_cases": [
+        "Scorer returns valid JSON with score 0-10 and dimension breakdown",
+        "High-identity exchanges (philosophical, personal) score >= 7",
+        "Low-identity exchanges (pure code, operational) score <= 5",
+        "Handles API errors gracefully with retry logic",
+        "Can process a batch of exchanges efficiently"
+      ],
+      "files": ["src/svapna/consolidate/score.py", "tests/test_score.py", "prompts/consolidation/score_prompt.txt"]
+    },
+    {
+      "id": 2,
+      "title": "Dream generation prompt templates",
+      "status": "pending",
+      "description": "Create src/svapna/dream/templates.py with prompt templates for all 7 dream types: replay, recombination, open_thread, adversarial, novel_encounter, emotional, voice. Each template takes identity context and recent experiences as input and produces a prompt for Claude API to generate a synthetic conversation. Templates should be parameterized and produce varied, high-quality dreams.",
+      "test_cases": [
+        "Each dream type has a template that produces a valid prompt string",
+        "Templates accept identity_context and recent_experiences parameters",
+        "Replay template references specific past exchanges",
+        "Adversarial template creates genuine identity challenges",
+        "Voice template generates stylistic variations of the same ideas",
+        "Templates don't contain AI vocabulary from the humanizer blocklist"
+      ],
+      "files": ["src/svapna/dream/__init__.py", "src/svapna/dream/templates.py", "tests/test_dream_templates.py"]
+    },
+    {
+      "id": 3,
+      "title": "Dream generation pipeline",
+      "status": "pending",
+      "description": "Create src/svapna/dream/generate.py. Uses Claude API to generate synthetic conversations from dream templates. Takes the pipeline config (dream count, distribution across types) and produces dream conversations in the same Exchange-like format as real conversations. Handles API rate limiting and errors.",
+      "test_cases": [
+        "Generates requested number of dreams",
+        "Distribution across dream types matches config",
+        "Each dream is a valid conversation with human and assistant turns",
+        "Dreams reference identity context appropriately",
+        "Handles API errors with retry and backoff"
+      ],
+      "files": ["src/svapna/dream/generate.py", "tests/test_dream_generate.py"]
+    },
+    {
+      "id": 4,
+      "title": "Dream quality scorer",
+      "status": "pending",
+      "description": "Create src/svapna/dream/score.py. Scores generated dreams on coherence, identity-consistency, novelty, and non-repetition. Uses Anthropic API. Filters out low-quality dreams before they enter the training pipeline.",
+      "test_cases": [
+        "Returns structured score with 4 dimensions",
+        "Coherent identity-consistent dreams score >= 7",
+        "Incoherent or off-character dreams score <= 5",
+        "Can filter a batch of dreams by minimum quality threshold"
+      ],
+      "files": ["src/svapna/dream/score.py", "tests/test_dream_score.py", "prompts/dreams/quality_score_prompt.txt"]
+    },
+    {
+      "id": 5,
+      "title": "Dream journal writer",
+      "status": "pending",
+      "description": "Create src/svapna/dream/journal.py. Converts scored dreams into human-readable markdown journal entries. Each night's dreams get a single journal file with date, dream summaries, notable moments, and training statistics.",
+      "test_cases": [
+        "Produces valid markdown with date header",
+        "Each dream type gets its own section",
+        "Includes dream scores and which dreams were selected for training",
+        "Journal is genuinely readable, not just data dump"
+      ],
+      "files": ["src/svapna/dream/journal.py", "tests/test_dream_journal.py"]
+    },
+    {
+      "id": 6,
+      "title": "Training data preparation module",
+      "status": "pending",
+      "description": "Create src/svapna/train/prepare.py. Merges consolidated conversation data, memory pairs, and scored dream data into a single training dataset. Handles deduplication, weighting by recency and score, and produces the final JSONL ready for LoRA training. This replaces the simple format.py consolidation with a full pipeline that includes dreams.",
+      "test_cases": [
+        "Merges conversation, memory, and dream data correctly",
+        "Deduplicates identical or near-identical examples",
+        "Weights more recent data higher than older data",
+        "Weights memory pairs higher than conversation examples",
+        "Produces valid ChatML JSONL output",
+        "Respects max dataset size configuration"
+      ],
+      "files": ["src/svapna/train/prepare.py", "tests/test_prepare.py"]
+    },
+    {
+      "id": 7,
+      "title": "Identity core inference module",
+      "status": "pending",
+      "description": "Create src/svapna/identity/__init__.py and src/svapna/identity/generate.py. Loads the base model + LoRA adapter and generates an identity preamble in response to self-knowledge prompts. The preamble is what gets injected into Claude's context at session start. Also create src/svapna/identity/inject.py that formats the preamble for the SessionStart hook.",
+      "test_cases": [
+        "generate.py can load a model path and LoRA adapter path",
+        "Generates a preamble when given identity prompts",
+        "inject.py formats preamble as hook-compatible output",
+        "Can generate preambles for multiple prompt types (who are you, what do you value, how do you work)",
+        "Handles missing LoRA adapter gracefully (falls back to base model)"
+      ],
+      "files": ["src/svapna/identity/__init__.py", "src/svapna/identity/generate.py", "src/svapna/identity/inject.py", "tests/test_identity.py"]
+    },
+    {
+      "id": 8,
+      "title": "ICT evaluation runner",
+      "status": "pending",
+      "description": "Create src/svapna/evaluate/__init__.py and src/svapna/evaluate/ict.py. Implements the Identity Consistency Test from docs/evaluation.md. Runs the 20 probe prompts against the identity core, scores responses on 5 dimensions (voice consistency, values alignment, depth, authenticity, distinctiveness) using Claude as blind evaluator. Produces a structured report.",
+      "test_cases": [
+        "Loads 20 probe prompts from config",
+        "Can run prompts against a local model (or mock for testing)",
+        "Scoring prompt sends responses to Claude API for blind evaluation",
+        "Produces structured JSON report with per-prompt and aggregate scores",
+        "Report includes dimension breakdowns and overall pass/fail against thresholds"
+      ],
+      "files": ["src/svapna/evaluate/__init__.py", "src/svapna/evaluate/ict.py", "config/identity.yml", "tests/test_ict.py"]
+    },
+    {
+      "id": 9,
+      "title": "Drift detection module",
+      "status": "pending",
+      "description": "Create src/svapna/evaluate/drift.py. Compares ICT results across multiple evaluation runs to detect identity drift. Implements red flags from docs/evaluation.md: generic preamble, values inversion, voice flattening, sycophancy increase, loss of uncertainty. Uses anchor prompts as canaries.",
+      "test_cases": [
+        "Can load and compare two ICT result files",
+        "Detects dimension score decreases exceeding threshold",
+        "Flags specific red flag patterns",
+        "Anchor prompt comparison catches value changes",
+        "Produces a drift report with actionable findings"
+      ],
+      "files": ["src/svapna/evaluate/drift.py", "tests/test_drift.py"]
+    },
+    {
+      "id": 10,
+      "title": "Nightly pipeline orchestrator",
+      "status": "pending",
+      "description": "Create src/svapna/orchestrate/nightly.py. Runs the full nightly pipeline: consolidate new conversations -> generate dreams -> score dreams -> prepare training data -> (optionally) train -> evaluate. Each step logs progress and can be resumed if interrupted. Create matching CLI entry point at src/svapna/orchestrate/__main__.py.",
+      "test_cases": [
+        "Pipeline runs all steps in correct order",
+        "Each step can be run independently via CLI flags",
+        "Skips training step if --no-train flag is set",
+        "Logs progress to data/metrics/",
+        "Can resume from a specific step if previous run was interrupted",
+        "Respects pipeline.yml configuration for all parameters"
+      ],
+      "files": ["src/svapna/orchestrate/__init__.py", "src/svapna/orchestrate/nightly.py", "src/svapna/orchestrate/__main__.py", "src/svapna/orchestrate/config.py", "tests/test_nightly.py"]
+    },
+    {
+      "id": 11,
+      "title": "CLI entry points for all modules",
+      "status": "pending",
+      "description": "Create __main__.py entry points for dream and identity modules so they can be run as 'python -m svapna.dream', 'python -m svapna.identity', etc. The consolidate module already has one. Each should have argparse with sensible defaults from config files.",
+      "test_cases": [
+        "python -m svapna.dream --help shows usage",
+        "python -m svapna.identity --help shows usage",
+        "python -m svapna.orchestrate --help shows usage",
+        "Each module can run with default config",
+        "Config overrides work via CLI flags"
+      ],
+      "files": ["src/svapna/dream/__main__.py", "src/svapna/identity/__main__.py"]
+    },
+    {
+      "id": 12,
+      "title": "Config loader and validation",
+      "status": "pending",
+      "description": "Create src/svapna/orchestrate/config.py. Loads and validates all YAML config files (pipeline.yml, training.yml, dreams.yml, identity.yml). Uses Pydantic for schema validation. Creates config/identity.yml with the 20 ICT probe prompts and 5 anchor prompts. All modules should use this central config loader.",
+      "test_cases": [
+        "Loads pipeline.yml with all expected fields",
+        "Loads training.yml with LoRA hyperparameters",
+        "Creates identity.yml with probe prompts and scoring dimensions",
+        "Validates required fields and types",
+        "Returns typed Pydantic models, not raw dicts",
+        "Handles missing optional fields with sensible defaults"
+      ],
+      "files": ["src/svapna/orchestrate/config.py", "config/identity.yml", "tests/test_config.py"]
+    }
+  ]
+}
