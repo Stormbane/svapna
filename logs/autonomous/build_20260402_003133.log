@@ -1,0 +1,9 @@
+=== Svapna Autonomous Build ===
+Project: /c/Projects/svapna
+Max iterations: 50
+Budget per iteration: $10
+Logs: /c/Projects/svapna/logs/autonomous
+
+Starting progress: 5 / 12 features
+
+=== Iteration 1: Feature #6 - Training data preparation module ===

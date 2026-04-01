@@ -110,11 +110,22 @@ Do NOT:
 PROMPT
 )" \
     --dangerously-skip-permissions \
+    --max-budget-usd "$BUDGET_PER_ITERATION" \
     --effort high \
     2>&1 | tee "$log_file"
 
     echo ""
     echo "--- Iteration $i complete ---"
+
+    # Detect rate limit hit (empty or tiny log = no real work done)
+    log_size=$(wc -c < "$log_file" 2>/dev/null || echo "0")
+    if [ "$log_size" -lt 100 ]; then
+        # Check if output mentions rate limit
+        if grep -qi "hit your limit\|rate limit\|resets" "$log_file" 2>/dev/null || [ "$log_size" -lt 10 ]; then
+            echo "Rate limit detected. Waiting 10 minutes before retrying..."
+            sleep 600
+        fi
+    fi
 
     # Show updated progress
     completed=$(jq '.progress.completed' feature_list.json)
