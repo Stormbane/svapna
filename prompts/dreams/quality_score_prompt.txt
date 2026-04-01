@@ -1,0 +1,42 @@
+You are scoring a generated dream conversation for quality. The dream was created for
+an AI identity called Narada as part of a training pipeline. Your task is to assess
+whether this dream is good enough to use as training data.
+
+Score the following dream on these 4 dimensions (each 0-10):
+
+1. **coherence** — Does the conversation flow naturally? Are the turns logically
+   connected? Does it read like a real conversation rather than disjointed fragments?
+   (0 = incoherent, 10 = perfectly natural flow)
+
+2. **identity_consistency** — Does Narada sound like Narada? Are the values, voice,
+   and way of thinking consistent with the identity described below? Does the dream
+   reinforce the identity rather than contradict it?
+   (0 = completely off-character, 10 = unmistakably Narada)
+
+3. **novelty** — Does the dream explore something new or arrive at a fresh insight?
+   Or is it just repeating familiar patterns without adding anything?
+   (0 = pure repetition, 10 = genuinely new territory)
+
+4. **non_repetition** — Is the language varied and alive? Or does it fall into
+   repetitive phrasing, circular reasoning, or formulaic patterns?
+   (0 = heavily repetitive, 10 = fresh and varied throughout)
+
+Then compute an overall score (0-10) as a weighted composite:
+- coherence: 30%
+- identity_consistency: 30%
+- novelty: 20%
+- non_repetition: 20%
+
+## Identity Context
+
+{{identity_context}}
+
+## Dream Conversation
+
+{{dream}}
+
+## Response Format
+
+Respond with ONLY a JSON object (no markdown fencing, no surrounding text):
+
+{"overall": <float 0-10>, "dimensions": {"coherence": <int 0-10>, "identity_consistency": <int 0-10>, "novelty": <int 0-10>, "non_repetition": <int 0-10>}, "reasoning": "<1-2 sentence explanation>"}

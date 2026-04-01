@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 3,
+    "completed": 4,
     "total": 12
   },
   "features": [
@@ -53,7 +53,7 @@
     {
       "id": 4,
       "title": "Dream quality scorer",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/dream/score.py. Scores generated dreams on coherence, identity-consistency, novelty, and non-repetition. Uses Anthropic API. Filters out low-quality dreams before they enter the training pipeline.",
       "test_cases": [
         "Returns structured score with 4 dimensions",
