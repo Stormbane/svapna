@@ -1,0 +1,17 @@
+Feature #10 is done. Here's what was implemented:
+
+**Files created:**
+- `src/svapna/orchestrate/__init__.py` — module init
+- `src/svapna/orchestrate/config.py` — `PipelineConfig` dataclass that loads and parses `config/pipeline.yml` with typed sections for consolidation, dreams, training, evaluation, and paths
+- `src/svapna/orchestrate/nightly.py` — the orchestrator: `Step` enum (6 steps), `RunState` for resume persistence, individual step runners (`run_consolidate`, `run_dream`, `run_score`, `run_prepare`, `run_train`, `run_evaluate`), and `run_pipeline()` which coordinates everything
+- `src/svapna/orchestrate/__main__.py` — CLI entry point with `--step`, `--no-train`, `--resume`, `--from-step`, and `--verbose` flags
+- `tests/test_nightly.py` — 30 tests covering all 6 test cases from the spec
+
+**Key design decisions:**
+- Steps use an `IntEnum` for ordering, so resume works by comparing step values
+- `RunState` is saved to `data/metrics/` as JSON after each step, enabling resume
+- Pipeline halts on failure (doesn't silently continue)
+- Step runners use lazy imports to avoid pulling in heavy dependencies (unsloth, etc.) unless that step actually runs
+- `_get_step_runner()` uses runtime module lookup so `unittest.mock.patch` works correctly
+
+**Test results:** 301/301 passing (30 new + 271 existing).

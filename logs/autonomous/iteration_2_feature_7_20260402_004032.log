@@ -1,0 +1,20 @@
+Feature #7 is complete. Here's what was implemented:
+
+**`src/svapna/identity/generate.py`** — Core inference module:
+- `GenerateConfig` with `from_config()` that loads model path from `training.yml` and detects LoRA adapter at `models/lora/latest`
+- `load_model()` loads base model via Unsloth, applies LoRA adapter if available, falls back gracefully on missing/corrupt adapters
+- `generate_preamble()` runs three identity prompts (who are you / what do you value / how do you work) through the model
+- `Preamble` dataclass with `to_text()` and `to_dict()` serialization
+
+**`src/svapna/identity/inject.py`** — Hook formatting:
+- `format_preamble()` produces header/footer-wrapped markdown for SessionStart hook injection
+- `save_preamble()` and `save_preamble_json()` for file persistence
+
+**`tests/test_identity.py`** — 33 tests covering all 5 specified test cases:
+- Model loading with/without LoRA adapter path
+- Preamble generation across multiple prompt types
+- Hook-compatible output formatting
+- Graceful fallback when LoRA is missing, nonexistent, or corrupt
+- Config loading from YAML files
+
+Progress: **7/12 features completed**.

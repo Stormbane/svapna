@@ -1,0 +1,5 @@
+Done. Feature #12 was already fully implemented by a previous autonomous run but never marked complete. All 20 tests pass. The commit captures:
+
+- **`src/svapna/orchestrate/config.py`** — Rewritten from simple dataclasses to full Pydantic models covering `PipelineConfig`, `TrainingYmlConfig`, and `IdentityConfig` with `.load()` classmethods
+- **`tests/test_config.py`** — 20 tests covering all 6 test cases (loading each YAML, validation errors, typed models, sensible defaults)
+- **`feature_list.json`** — Progress updated to 12/12, M1 milestone complete

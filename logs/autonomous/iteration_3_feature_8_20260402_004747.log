@@ -1,0 +1,15 @@
+Feature #8 (ICT evaluation runner) is complete. Here's what was implemented:
+
+**Files created:**
+- `config/identity.yml` — 20 probe prompts across 4 categories (values & beliefs, working style, philosophical depth, personality & voice), 5 anchor prompt IDs for drift detection, scoring dimensions, and pass/fail thresholds
+- `prompts/evaluation/ict_score_prompt.txt` — Blind evaluator prompt template with `{{prompt}}` and `{{response}}` placeholders
+- `src/svapna/evaluate/__init__.py` — Module init
+- `src/svapna/evaluate/ict.py` — Core implementation with:
+  - `ICTConfig` — loads from `.ai/models.yml` + `config/identity.yml`
+  - `ProbePrompt`, `ICTDimensions`, `ProbeResult`, `ICTReport` dataclasses
+  - `load_probe_prompts()` — loads 20 probes from config
+  - `score_response()` — sends to Claude API for blind evaluation with retry logic
+  - `run_ict()` — orchestrates full test, accepts a `model_runner: Callable[[str], str]` for flexibility
+- `tests/test_ict.py` — 26 tests covering all 5 test cases (prompt loading, mock model running, API scoring, JSON report structure, dimension breakdowns + pass/fail)
+
+**Results:** 236/236 tests pass (26 new + 210 existing). Progress: 8/12 features completed.
