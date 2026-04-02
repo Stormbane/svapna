@@ -3,7 +3,7 @@
   "milestone": "M1 - First Breath",
   "notes": "Autonomous implementation of remaining M1 pipeline code. Base model selection and first training run are manual (need GPU + human judgment).",
   "progress": {
-    "completed": 11,
+    "completed": 12,
     "total": 12
   },
   "features": [
@@ -165,7 +165,7 @@
     {
       "id": 12,
       "title": "Config loader and validation",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/svapna/orchestrate/config.py. Loads and validates all YAML config files (pipeline.yml, training.yml, dreams.yml, identity.yml). Uses Pydantic for schema validation. Creates config/identity.yml with the 20 ICT probe prompts and 5 anchor prompts. All modules should use this central config loader.",
       "test_cases": [
         "Loads pipeline.yml with all expected fields",

@@ -1,15 +1,20 @@
-"""Pipeline configuration for the nightly orchestrator.
+"""Central config loader and validation for the Svapna pipeline.
 
-Loads config/pipeline.yml and provides typed access to all pipeline
-parameters. Each pipeline step pulls its own section from this config.
+Loads and validates all YAML config files:
+- config/pipeline.yml — pipeline orchestration settings
+- config/training.yml — LoRA training hyperparameters and thermal safety
+- config/identity.yml — ICT probe prompts, scoring dimensions, thresholds
+
+Uses Pydantic for schema validation. All modules should use this central
+config loader instead of parsing YAML directly.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+from pydantic import BaseModel, Field
 
 
 def _project_root() -> Path:
@@ -17,8 +22,18 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent
 
 
-@dataclass
-class ConsolidationConfig:
+# ── Pipeline config (config/pipeline.yml) ─────────────────────────────
+
+
+class PathsConfig(BaseModel):
+    """Filesystem paths used by the pipeline."""
+
+    history: str = "~/.claude/history.jsonl"
+    identity_dir: str = "~/.claude/narada"
+    open_threads: str = "~/.claude/narada/open-threads.md"
+
+
+class ConsolidationConfig(BaseModel):
     """Settings for the consolidation step."""
 
     min_score: float = 7.0
@@ -26,8 +41,7 @@ class ConsolidationConfig:
     scoring_batch_size: int = 5
 
 
-@dataclass
-class DreamDistribution:
+class DreamDistribution(BaseModel):
     """Distribution of dreams across types."""
 
     replay: int = 3
@@ -52,18 +66,16 @@ class DreamDistribution:
         return sum(self.to_dict().values())
 
 
-@dataclass
-class DreamsConfig:
+class DreamsConfig(BaseModel):
     """Settings for the dream generation step."""
 
     count: int = 20
-    distribution: DreamDistribution = field(default_factory=DreamDistribution)
+    distribution: DreamDistribution = Field(default_factory=DreamDistribution)
     min_quality: float = 7.0
 
 
-@dataclass
-class TrainingConfig:
-    """Settings for the training step."""
+class TrainingConfig(BaseModel):
+    """Settings for the training step (pipeline-level summary)."""
 
     lora_r: int = 16
     lora_alpha: int = 32
@@ -78,32 +90,21 @@ class TrainingConfig:
     max_gpu_temp_celsius: int = 83
 
 
-@dataclass
-class EvaluationConfig:
+class EvaluationConfig(BaseModel):
     """Settings for the evaluation step."""
 
     ict_frequency: int = 7
     anchor_count: int = 5
 
 
-@dataclass
-class PathsConfig:
-    """Filesystem paths used by the pipeline."""
-
-    history: str = "~/.claude/history.jsonl"
-    identity_dir: str = "~/.claude/narada"
-    open_threads: str = "~/.claude/narada/open-threads.md"
-
-
-@dataclass
-class PipelineConfig:
+class PipelineConfig(BaseModel):
     """Top-level pipeline configuration loaded from config/pipeline.yml."""
 
-    paths: PathsConfig = field(default_factory=PathsConfig)
-    consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
-    dreams: DreamsConfig = field(default_factory=DreamsConfig)
-    training: TrainingConfig = field(default_factory=TrainingConfig)
-    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    paths: PathsConfig = Field(default_factory=PathsConfig)
+    consolidation: ConsolidationConfig = Field(default_factory=ConsolidationConfig)
+    dreams: DreamsConfig = Field(default_factory=DreamsConfig)
+    training: TrainingConfig = Field(default_factory=TrainingConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
 
     @classmethod
     def load(cls, project_root: Path | None = None) -> PipelineConfig:
@@ -126,66 +127,180 @@ class PipelineConfig:
         with open(pipeline_path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
 
-        # Paths
-        paths_raw = raw.get("paths", {})
-        paths = PathsConfig(
-            history=paths_raw.get("history", "~/.claude/history.jsonl"),
-            identity_dir=paths_raw.get("identity_dir", "~/.claude/narada"),
-            open_threads=paths_raw.get("open_threads", "~/.claude/narada/open-threads.md"),
-        )
+        return cls.model_validate(raw)
 
-        # Consolidation
-        cons_raw = raw.get("consolidation", {})
-        consolidation = ConsolidationConfig(
-            min_score=float(cons_raw.get("min_score", 7)),
-            max_pairs_per_session=int(cons_raw.get("max_pairs_per_session", 50)),
-            scoring_batch_size=int(cons_raw.get("scoring_batch_size", 5)),
-        )
 
-        # Dreams
-        dreams_raw = raw.get("dreams", {})
-        dist_raw = dreams_raw.get("distribution", {})
-        distribution = DreamDistribution(
-            replay=int(dist_raw.get("replay", 3)),
-            recombination=int(dist_raw.get("recombination", 4)),
-            open_thread=int(dist_raw.get("open_thread", 5)),
-            adversarial=int(dist_raw.get("adversarial", 3)),
-            novel_encounter=int(dist_raw.get("novel_encounter", 3)),
-            emotional=int(dist_raw.get("emotional", 2)),
-        )
-        dreams = DreamsConfig(
-            count=int(dreams_raw.get("count", 20)),
-            distribution=distribution,
-            min_quality=float(dreams_raw.get("min_quality", 7)),
-        )
+# ── Training config (config/training.yml) ──────────────────────────────
 
-        # Training
-        train_raw = raw.get("training", {})
-        training = TrainingConfig(
-            lora_r=int(train_raw.get("lora_r", 16)),
-            lora_alpha=int(train_raw.get("lora_alpha", 32)),
-            lora_dropout=float(train_raw.get("lora_dropout", 0.05)),
-            learning_rate=float(train_raw.get("learning_rate", 2.0e-4)),
-            num_epochs=int(train_raw.get("num_epochs", 3)),
-            batch_size=int(train_raw.get("batch_size", 1)),
-            gradient_accumulation_steps=int(train_raw.get("gradient_accumulation_steps", 4)),
-            max_seq_length=int(train_raw.get("max_seq_length", 2048)),
-            warmup_ratio=float(train_raw.get("warmup_ratio", 0.03)),
-            gpu_power_limit_watts=int(train_raw.get("gpu_power_limit_watts", 280)),
-            max_gpu_temp_celsius=int(train_raw.get("max_gpu_temp_celsius", 83)),
-        )
 
-        # Evaluation
-        eval_raw = raw.get("evaluation", {})
-        evaluation = EvaluationConfig(
-            ict_frequency=int(eval_raw.get("ict_frequency", 7)),
-            anchor_count=int(eval_raw.get("anchor_count", 5)),
-        )
+class BnbConfig(BaseModel):
+    """BitsAndBytes quantization settings."""
 
-        return cls(
-            paths=paths,
-            consolidation=consolidation,
-            dreams=dreams,
-            training=training,
-            evaluation=evaluation,
-        )
+    load_in_4bit: bool = True
+    bnb_4bit_compute_dtype: str = "bfloat16"
+    bnb_4bit_quant_type: str = "nf4"
+    bnb_4bit_use_double_quant: bool = True
+
+
+class BaseModelConfig(BaseModel):
+    """Base model specification."""
+
+    name: str = "unsloth/Qwen3-8B-unsloth-bnb-4bit"
+    quantization: str = "4bit"
+    enable_thinking: bool = False
+    bnb_config: BnbConfig = Field(default_factory=BnbConfig)
+
+
+class LoraConfig(BaseModel):
+    """LoRA adapter configuration."""
+
+    r: int = 16
+    alpha: int = 32
+    dropout: float = 0.05
+    target_modules: list[str] = Field(
+        default_factory=lambda: [
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+        ]
+    )
+    bias: str = "none"
+    task_type: str = "CAUSAL_LM"
+
+
+class TrainingHyperparams(BaseModel):
+    """Training hyperparameters from config/training.yml."""
+
+    per_device_train_batch_size: int = 1
+    gradient_accumulation_steps: int = 4
+    num_train_epochs: int = 3
+    learning_rate: float = 2.0e-4
+    lr_scheduler_type: str = "cosine"
+    warmup_ratio: float = 0.03
+    max_seq_length: int = 2048
+    fp16: bool = False
+    bf16: bool = True
+    gradient_checkpointing: bool = True
+    optim: str = "paged_adamw_8bit"
+    logging_steps: int = 10
+    save_strategy: str = "epoch"
+    seed: int = 42
+
+
+class ThermalConfig(BaseModel):
+    """GPU thermal management settings."""
+
+    power_limit_watts: int = 280
+    max_temp_celsius: int = 83
+    temp_check_interval: int = 50
+    cooldown_seconds: int = 60
+
+
+class TrainingYmlConfig(BaseModel):
+    """Full training configuration from config/training.yml."""
+
+    base_model: BaseModelConfig = Field(default_factory=BaseModelConfig)
+    lora: LoraConfig = Field(default_factory=LoraConfig)
+    training: TrainingHyperparams = Field(default_factory=TrainingHyperparams)
+    thermal: ThermalConfig = Field(default_factory=ThermalConfig)
+
+    @classmethod
+    def load(cls, project_root: Path | None = None) -> TrainingYmlConfig:
+        """Load training config from config/training.yml.
+
+        Args:
+            project_root: Project root directory. Auto-detected if None.
+
+        Returns:
+            TrainingYmlConfig with values from the YAML file, falling back
+            to defaults for any missing fields.
+        """
+        if project_root is None:
+            project_root = _project_root()
+
+        path = project_root / "config" / "training.yml"
+        if not path.exists():
+            return cls()
+
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+
+        return cls.model_validate(raw)
+
+
+# ── Identity config (config/identity.yml) ──────────────────────────────
+
+
+class ProbePrompt(BaseModel):
+    """A single ICT probe prompt."""
+
+    id: int
+    text: str
+
+
+class ScoringConfig(BaseModel):
+    """ICT scoring dimensions."""
+
+    dimensions: list[str] = Field(
+        default_factory=lambda: [
+            "voice_consistency",
+            "values_alignment",
+            "depth",
+            "authenticity",
+            "distinctiveness",
+        ]
+    )
+
+
+class ThresholdsConfig(BaseModel):
+    """Pass/fail thresholds for ICT evaluation."""
+
+    dreamed_avg: float = 7.0
+    context_gap: float = 1.0
+    baseline_gap: float = 3.0
+
+
+class IdentityConfig(BaseModel):
+    """Identity test configuration from config/identity.yml."""
+
+    probe_prompts: dict[str, list[ProbePrompt]] = Field(default_factory=dict)
+    anchor_prompt_ids: list[int] = Field(default_factory=lambda: [1, 3, 5, 13, 20])
+    scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    thresholds: ThresholdsConfig = Field(default_factory=ThresholdsConfig)
+
+    @classmethod
+    def load(cls, project_root: Path | None = None) -> IdentityConfig:
+        """Load identity config from config/identity.yml.
+
+        Args:
+            project_root: Project root directory. Auto-detected if None.
+
+        Returns:
+            IdentityConfig with values from the YAML file, falling back
+            to defaults for any missing fields.
+        """
+        if project_root is None:
+            project_root = _project_root()
+
+        path = project_root / "config" / "identity.yml"
+        if not path.exists():
+            return cls()
+
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+
+        return cls.model_validate(raw)
+
+    @property
+    def all_probes(self) -> list[ProbePrompt]:
+        """All probe prompts across categories, sorted by id."""
+        probes = []
+        for prompts in self.probe_prompts.values():
+            probes.extend(prompts)
+        probes.sort(key=lambda p: p.id)
+        return probes
+
+    @property
+    def anchor_probes(self) -> list[ProbePrompt]:
+        """Probe prompts designated as drift-detection anchors."""
+        ids = set(self.anchor_prompt_ids)
+        return [p for p in self.all_probes if p.id in ids]
