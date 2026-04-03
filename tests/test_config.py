@@ -175,6 +175,7 @@ def test_loads_training_yml_with_lora(tmp_path):
     assert config.base_model.bnb_config.load_in_4bit is True
     assert config.base_model.bnb_config.bnb_4bit_quant_type == "nf4"
 
+    # These match the inline YAML above, not the real config
     assert config.lora.r == 16
     assert config.lora.alpha == 32
     assert config.lora.dropout == 0.05
@@ -460,7 +461,7 @@ def test_loads_real_training_yml():
     """Loads the actual config/training.yml from the project."""
     config = TrainingYmlConfig.load()
     assert config.base_model.name == "unsloth/Qwen3-8B-unsloth-bnb-4bit"
-    assert config.lora.r == 16
+    assert config.lora.r == 32
     assert len(config.lora.target_modules) == 7
 
 

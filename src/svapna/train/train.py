@@ -136,12 +136,12 @@ def train(
         load_in_4bit=True,
     )
 
-    # Apply LoRA
+    # Apply LoRA — research-backed defaults from personality-finetuning-research.md
     model = FastLanguageModel.get_peft_model(
         model,
-        r=lora_config.get("r", 16),
-        lora_alpha=lora_config.get("alpha", 32),
-        lora_dropout=lora_config.get("dropout", 0.05),
+        r=lora_config.get("r", 32),
+        lora_alpha=lora_config.get("alpha", 64),
+        lora_dropout=lora_config.get("dropout", 0.1),
         target_modules=lora_config.get("target_modules", [
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj",
@@ -152,37 +152,56 @@ def train(
 
     # Load training data
     print(f"Loading training data from {training_data_path}")
-    with open(training_data_path) as f:
+    with open(training_data_path, encoding="utf-8") as f:
         raw_data = [json.loads(line) for line in f if line.strip()]
 
-    # Format for training — convert ChatML conversations to text
+    # Split into train/validation sets
+    data_config = config.get("data", {})
+    val_split = data_config.get("validation_split", 0.1)
+    val_size = max(1, int(len(raw_data) * val_split))
+    import random
+    random.seed(training_config.get("seed", 42))
+    random.shuffle(raw_data)
+    val_data = raw_data[:val_size]
+    train_data = raw_data[val_size:]
+    print(f"  Train: {len(train_data)} examples, Validation: {len(val_data)} examples")
+
+    # Format for training — use Qwen3 chat template
+    # IMPORTANT: enable_thinking=False for Qwen3 personality training
     def format_example(example):
         conversations = example.get("conversations", [])
-        text = ""
+        # Use the tokenizer's chat template for correct Qwen3 formatting
+        messages = []
         for msg in conversations:
-            role = msg["role"]
-            content = msg["content"]
-            if role == "system":
-                text += f"<|system|>\n{content}\n"
-            elif role == "user":
-                text += f"<|user|>\n{content}\n"
-            elif role == "assistant":
-                text += f"<|assistant|>\n{content}\n"
-        text += tokenizer.eos_token
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        try:
+            text = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=False,
+                enable_thinking=False,
+            )
+        except TypeError:
+            # Fallback if enable_thinking not supported
+            text = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=False,
+            )
+        if not text.endswith(tokenizer.eos_token):
+            text += tokenizer.eos_token
         return {"text": text}
 
-    dataset = Dataset.from_list(raw_data)
-    dataset = dataset.map(format_example)
+    train_dataset = Dataset.from_list(train_data)
+    train_dataset = train_dataset.map(format_example)
+    val_dataset = Dataset.from_list(val_data)
+    val_dataset = val_dataset.map(format_example)
 
-    print(f"Training on {len(dataset)} examples")
+    print(f"Training on {len(train_dataset)} examples (validating on {len(val_dataset)})")
 
     # Training arguments
     args = TrainingArguments(
         output_dir=str(output_dir),
         per_device_train_batch_size=training_config.get("per_device_train_batch_size", 1),
         gradient_accumulation_steps=training_config.get("gradient_accumulation_steps", 4),
-        num_train_epochs=training_config.get("num_train_epochs", 3),
-        learning_rate=training_config.get("learning_rate", 2e-4),
+        num_train_epochs=training_config.get("num_train_epochs", 2),
+        learning_rate=training_config.get("learning_rate", 1e-4),
         lr_scheduler_type=training_config.get("lr_scheduler_type", "cosine"),
         warmup_ratio=training_config.get("warmup_ratio", 0.03),
         fp16=not training_config.get("bf16", True),
@@ -194,10 +213,15 @@ def train(
         report_to="none",
     )
 
-    # Trainer with thermal monitoring callback
+    # Add weight decay from config
+    if training_config.get("weight_decay"):
+        args.weight_decay = training_config["weight_decay"]
+
+    # Trainer with validation for overfitting detection
     trainer = SFTTrainer(
         model=model,
-        train_dataset=dataset,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
         args=args,
         dataset_text_field="text",
         max_seq_length=max_seq_length,
@@ -228,10 +252,20 @@ def train(
     metadata = {
         "base_model": model_name,
         "training_data": str(training_data_path),
-        "num_examples": len(dataset),
+        "num_train_examples": len(train_dataset),
+        "num_val_examples": len(val_dataset),
         "training_time_seconds": elapsed,
         "timestamp": datetime.now().isoformat(),
-        "config": config,
+        "lora_config": {
+            "r": lora_config.get("r", 32),
+            "alpha": lora_config.get("alpha", 64),
+            "dropout": lora_config.get("dropout", 0.1),
+        },
+        "training_config": {
+            "epochs": training_config.get("num_train_epochs", 2),
+            "learning_rate": training_config.get("learning_rate", 1e-4),
+            "weight_decay": training_config.get("weight_decay", 0.01),
+        },
         "gpu_temp_start": temp,
         "gpu_temp_end": get_gpu_temp(),
     }

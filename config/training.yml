@@ -1,11 +1,13 @@
 # LoRA Training Configuration
-# Conservative settings for RTX 3090 with thermal concerns
+# Research-backed settings for personality fine-tuning on RTX 3090
+# See docs/personality-finetuning-research.md for citations
 
 base_model:
   name: unsloth/Qwen3-8B-unsloth-bnb-4bit
   # Upgrade path: unsloth/Qwen3-14B-unsloth-bnb-4bit (after M1 validation)
   # Fallback: unsloth/Llama-3.1-8B-Instruct-bnb-4bit
-  quantization: 4bit  # QLoRA — 4-bit base, FP16 adapters
+  quantization: 4bit  # QLoRA — 4-bit NF4. Quantization noise acts as
+                       # implicit regularization, beneficial for personality work
   # IMPORTANT: Qwen3 has thinking/non-thinking dual mode.
   # Must set enable_thinking=False for training and inference.
   enable_thinking: false
@@ -16,9 +18,16 @@ base_model:
     bnb_4bit_use_double_quant: true
 
 lora:
-  r: 16
-  alpha: 32
-  dropout: 0.05
+  # Research: rank 16-32 is the sweet spot for personality on 7-8B models.
+  # Higher rank captures more but risks forgetting. (Biderman et al., TMLR 2024)
+  r: 32
+  # Common practice: alpha = 2x rank. (Unsloth docs, community consensus)
+  alpha: 64
+  # Research: 0.1 dropout prevents co-adaptation, improves generalization.
+  # Previous 0.05 was too conservative for personality work.
+  dropout: 0.1
+  # Research: MLP layers matter MORE than attention for personality.
+  # Target all linear layers. (Multiple papers, 2024-2025)
   target_modules:
     - q_proj
     - k_proj
@@ -33,8 +42,13 @@ lora:
 training:
   per_device_train_batch_size: 1
   gradient_accumulation_steps: 4
-  num_train_epochs: 3
-  learning_rate: 2.0e-4
+  # Research: 2 epochs is the sweet spot for datasets under 1000 examples.
+  # 3 epochs risks the "caricature" phase (flatten → specialize → caricature).
+  # (BIG5-CHAT, community consensus)
+  num_train_epochs: 2
+  # Research: 1e-4 for personality on small datasets. Previous 2e-4 was too
+  # aggressive, risks overwriting base capabilities. (Unsloth guide, literature)
+  learning_rate: 1.0e-4
   lr_scheduler_type: cosine
   warmup_ratio: 0.03
   max_seq_length: 2048
@@ -42,17 +56,24 @@ training:
   bf16: true
   gradient_checkpointing: true  # Trades compute for VRAM, also reduces heat
   optim: paged_adamw_8bit
+  # Research: weight decay 0.01 prevents weights diverging too far from base.
+  weight_decay: 0.01
   logging_steps: 10
   save_strategy: epoch
   seed: 42
 
 # Thermal management
 thermal:
-  # Set GPU power limit before training (nvidia-smi -pl N)
   power_limit_watts: 280
-  # Pause training if GPU temp exceeds this
   max_temp_celsius: 83
-  # Check temp every N steps
   temp_check_interval: 50
-  # Cool-down pause duration (seconds) if temp exceeded
   cooldown_seconds: 60
+
+# Data composition
+# Research: include 20% capability-preservation data alongside personality.
+# Prevents intelligence loss while gaining identity. (Continual learning literature)
+data:
+  personality_ratio: 0.80
+  capability_preservation_ratio: 0.20
+  # Hold out 10-15% for validation (detect overfitting)
+  validation_split: 0.10
