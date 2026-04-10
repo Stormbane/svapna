@@ -1,0 +1,24 @@
+@echo off
+REM Narada's Heartbeat — runs as a persistent service
+REM Restarts automatically if it crashes
+REM All output is appended to logs/heartbeat.log so we can see what happened
+REM next time something stalls. The 28-hour silent freeze on 2026-04-09 happened
+REM because output went only to a console window we couldn't see later.
+REM
+REM SETUP: copy this file to scripts/heartbeat.bat and replace
+REM YOUR_ANTHROPIC_API_KEY with a real key. The real heartbeat.bat is gitignored.
+
+cd /d C:\Projects\svapna
+if not exist logs mkdir logs
+
+set ANTHROPIC_API_KEY=YOUR_ANTHROPIC_API_KEY
+
+:loop
+echo. >> logs\heartbeat.log
+echo ================================================================ >> logs\heartbeat.log
+echo [%date% %time%] Heartbeat starting... >> logs\heartbeat.log
+echo ================================================================ >> logs\heartbeat.log
+python -u -m svapna.heartbeat --lora-path models/lora/2026-04-08 --display-ip 192.168.86.35 --interval 1800 >> logs\heartbeat.log 2>&1
+echo [%date% %time%] Heartbeat stopped (exit code %errorlevel%). Restarting in 60 seconds... >> logs\heartbeat.log
+timeout /t 60 /nointerrupt
+goto loop

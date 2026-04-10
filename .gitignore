@@ -20,6 +20,9 @@ env/
 .env.production
 .env*.local
 
+# Scripts that contain secrets (commit the .example template only)
+scripts/heartbeat.bat
+
 # IDE
 .vscode/
 .idea/
@@ -41,6 +44,11 @@ data/dreams/
 data/training/
 data/journals/
 data/metrics/
+data/heartbeat/
+
+# Vendored / reference firmware binaries (too large, can be re-downloaded)
+firmware/xiaozhi-esp-box-3/
+firmware/xiaozhi-esp-box-3.zip
 
 # Evaluations are TRACKED (identity evolution record)
 # data/evaluations/ is NOT gitignored
@@ -58,3 +66,6 @@ test-results/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Runtime logs
+logs/
