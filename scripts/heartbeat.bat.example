@@ -5,13 +5,19 @@ REM All output is appended to logs/heartbeat.log so we can see what happened
 REM next time something stalls. The 28-hour silent freeze on 2026-04-09 happened
 REM because output went only to a console window we couldn't see later.
 REM
-REM SETUP: copy this file to scripts/heartbeat.bat and replace
-REM YOUR_ANTHROPIC_API_KEY with a real key. The real heartbeat.bat is gitignored.
+REM SETUP: copy this file to scripts/heartbeat.bat. The real heartbeat.bat is
+REM gitignored so any local edits stay out of the repo.
+REM
+REM BILLING: `claude -p` uses whatever credentials `claude` is logged in with
+REM on this Windows user account (stored in ~/.claude/.credentials.json). For
+REM the Max subscription that means heartbeats are free. DO NOT set
+REM ANTHROPIC_API_KEY here unless you explicitly want API billing — that env
+REM var overrides the subscription and every heartbeat call ($0.05–$1.00)
+REM gets charged to API credits. This happened on 2026-04-11, see
+REM .ai/logs/errors.md.
 
 cd /d C:\Projects\svapna
 if not exist logs mkdir logs
-
-set ANTHROPIC_API_KEY=YOUR_ANTHROPIC_API_KEY
 
 :loop
 echo. >> logs\heartbeat.log
