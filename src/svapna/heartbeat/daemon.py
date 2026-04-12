@@ -106,7 +106,8 @@ class HeartbeatDaemon:
         logger.info("Delegating to Claude...")
         self.display.show_desire(desire.action.value, desire.topic)
         plan = self.delegate.create_plan(desire)
-        logger.info("Plan received (%d chars)", len(plan.steps))
+        cycle_cost = plan.cost_usd
+        logger.info("Plan received (%d chars, $%.4f)", len(plan.steps), plan.cost_usd)
 
         # 5. Viveka judges the plan
         logger.info("Judging plan...")
@@ -122,6 +123,7 @@ class HeartbeatDaemon:
             revisions += 1
             logger.info("Requesting revision %d...", revisions)
             plan = self.delegate.revise_plan(plan, judgment.feedback)
+            cycle_cost += plan.cost_usd
             judgment = self.viveka.judge(desire, plan.steps)
             logger.info("Revision judgment: %s", "APPROVED" if judgment.approved else "REJECTED")
 
@@ -131,8 +133,11 @@ class HeartbeatDaemon:
             logger.info("Executing approved plan...")
             self.display.show_executing(desire.topic)
             result = self.delegate.execute_plan(plan, desire)
-            logger.info("Result: %s", result.summary)
+            cycle_cost += result.cost_usd
+            logger.info("Result: %s ($%.4f)", result.summary, result.cost_usd)
             self.display.show_result(result.summary)
+
+        logger.info("Cycle cost: $%.4f", cycle_cost)
 
         # 8. Remember everything
         self.memory.save_heartbeat(
@@ -148,6 +153,7 @@ class HeartbeatDaemon:
             raw_plan=plan.raw_response,
             raw_judgment=judgment.raw_response,
             raw_result=result.raw_response if result else None,
+            cost_usd=cycle_cost,
         )
 
         return {

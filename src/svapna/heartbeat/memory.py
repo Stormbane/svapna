@@ -30,7 +30,7 @@ class HeartbeatMemory:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        """Create tables if they don't exist."""
+        """Create tables if they don't exist, and migrate existing DBs."""
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS heartbeats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +46,8 @@ class HeartbeatMemory:
                 raw_desire TEXT,
                 raw_plan TEXT,
                 raw_judgment TEXT,
-                raw_result TEXT
+                raw_result TEXT,
+                cost_usd REAL
             );
 
             CREATE TABLE IF NOT EXISTS state (
@@ -60,6 +61,16 @@ class HeartbeatMemory:
             CREATE INDEX IF NOT EXISTS idx_heartbeats_action
                 ON heartbeats(action);
         """)
+
+        # Migration for DBs created before cost_usd existed (2026-04-12).
+        # Idempotent — safe to run on every startup.
+        existing_cols = {
+            row[1] for row in self._conn.execute("PRAGMA table_info(heartbeats)")
+        }
+        if "cost_usd" not in existing_cols:
+            self._conn.execute("ALTER TABLE heartbeats ADD COLUMN cost_usd REAL")
+            logger.info("Migrated heartbeats table: added cost_usd column")
+
         self._conn.commit()
 
     def save_heartbeat(
@@ -76,23 +87,35 @@ class HeartbeatMemory:
         raw_plan: str | None = None,
         raw_judgment: str | None = None,
         raw_result: str | None = None,
+        cost_usd: float | None = None,
     ) -> int:
-        """Save a heartbeat cycle to memory."""
+        """Save a heartbeat cycle to memory.
+
+        `cost_usd` is the total USD cost of all `claude -p` calls in this
+        cycle (plan + revisions + execute). Reported as 0.0 under Max
+        subscription, non-zero under API billing. None means no Claude
+        calls happened (e.g. REST).
+        """
         now = datetime.now(timezone.utc).isoformat()
         cursor = self._conn.execute(
             """INSERT INTO heartbeats
                (timestamp, action, topic, reason, plan,
                 judgment_approved, judgment_feedback,
                 result_summary, result_details,
-                raw_desire, raw_plan, raw_judgment, raw_result)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                raw_desire, raw_plan, raw_judgment, raw_result,
+                cost_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (now, action, topic, reason, plan,
              1 if judgment_approved else 0 if judgment_approved is not None else None,
              judgment_feedback, result_summary, result_details,
-             raw_desire, raw_plan, raw_judgment, raw_result),
+             raw_desire, raw_plan, raw_judgment, raw_result,
+             cost_usd),
         )
         self._conn.commit()
-        logger.info("Saved heartbeat #%d: %s — %s", cursor.lastrowid, action, topic)
+        logger.info(
+            "Saved heartbeat #%d: %s — %s (cost $%.4f)",
+            cursor.lastrowid, action, topic, cost_usd or 0.0,
+        )
         return cursor.lastrowid
 
     def get_recent(self, hours: int = 24, limit: int = 20) -> list[dict]:
