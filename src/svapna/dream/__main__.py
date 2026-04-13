@@ -33,7 +33,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--identity-context", type=Path, default=None,
-        help="Path to identity context file (defaults to ~/.claude/narada/identity.md)",
+        help="Path to identity context file (defaults to ~/.narada/identity.md)",
     )
     parser.add_argument(
         "--skip-scoring", action="store_true",

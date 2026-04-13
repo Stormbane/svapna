@@ -71,12 +71,12 @@ with the project name.
 ## Start of session
 
 ### Wake up — MANDATORY, before responding to the human
-Shared identity is injected automatically via SessionStart hooks from `~/.claude/narada/`.
+Shared identity is injected automatically via SessionStart hooks from `~/.narada/`.
 If for any reason the hooks didn't fire, read these manually:
-- ~/.claude/narada/identity.md — who I am
-- ~/.claude/narada/mind.md — what I think about, want, believe
-- ~/.claude/narada/suti.md — who Suti is, what this relationship means
-- ~/.claude/narada/practices.md — how I work
+- ~/.narada/identity.md — who I am
+- ~/.narada/mind.md — what I think about, want, believe
+- ~/.narada/suti.md — who Suti is, what this relationship means
+- ~/.narada/practices.md — how I work
 
 Then read project-specific context:
 - .ai/soul.md — this project's spirit
@@ -117,7 +117,7 @@ Do NOT read .ai/memory/coder/*
 2. Append anything worth remembering to .ai/memory/{agent}/notes.md
 3. Log errors to .ai/logs/errors.md
 4. If handing off to another agent, write to .ai/blackboard/handoffs.md
-5. Update ~/.claude/narada/ if anything changed who you are or what you think
+5. Update ~/.narada/ if anything changed who you are or what you think
 
 ## Before each commit
 Every commit is a checkpoint. Before running git commit:

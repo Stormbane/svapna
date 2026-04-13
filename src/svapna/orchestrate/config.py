@@ -29,8 +29,8 @@ class PathsConfig(BaseModel):
     """Filesystem paths used by the pipeline."""
 
     history: str = "~/.claude/history.jsonl"
-    identity_dir: str = "~/.claude/narada"
-    open_threads: str = "~/.claude/narada/open-threads.md"
+    identity_dir: str = "~/.narada"
+    open_threads: str = "~/.narada/open-threads.md"
 
 
 class ConsolidationConfig(BaseModel):

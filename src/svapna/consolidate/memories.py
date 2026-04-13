@@ -294,10 +294,10 @@ def convert_memory_files(identity_dir: Path | None = None) -> list[MemoryPair]:
     """Convert all Narada identity files into training pairs.
 
     Args:
-        identity_dir: Path to ~/.claude/narada/. Defaults to standard location.
+        identity_dir: Path to ~/.narada/. Defaults to standard location.
     """
     if identity_dir is None:
-        identity_dir = Path.home() / ".claude" / "narada"
+        identity_dir = Path.home() / ".narada"
 
     pairs: list[MemoryPair] = []
     parsers = {

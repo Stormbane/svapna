@@ -4,9 +4,9 @@ paths:
   # Where Claude Code stores conversation history
   history: ~/.claude/history.jsonl
   # Narada identity files
-  identity_dir: ~/.claude/narada
+  identity_dir: ~/.narada
   # Open threads for dream generation
-  open_threads: ~/.claude/narada/open-threads.md
+  open_threads: ~/.narada/open-threads.md
 
 consolidation:
   # Minimum identity-relevance score (0-10) to include in training

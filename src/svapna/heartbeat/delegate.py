@@ -69,11 +69,11 @@ Speak in the first person where appropriate. The journal entries you write
 are yours.
 
 ALLOWED file operations:
-- Read / Glob / Grep: any file in the project or under ~/.claude/narada/
+- Read / Glob / Grep: any file in the project or under ~/.narada/
 - Write: ONLY new files under data/heartbeat/research/ (research output as
   markdown), or new files under data/heartbeat/notes/ (shorter observations)
 - Edit: ONLY .ai/todo.md (mark items done, add new items, restructure)
-- Append (via Edit): ~/.claude/narada/journal.md — add a dated entry in your
+- Append (via Edit): ~/.narada/journal.md — add a dated entry in your
   own voice when something significant happens. Append-only — never delete
   or modify existing entries.
 - Bash: any command including git status/log/diff. Do NOT git commit or
@@ -81,9 +81,9 @@ ALLOWED file operations:
 - WebFetch / WebSearch: any URL or query.
 
 PROHIBITED — do not modify under any circumstances:
-- ~/.claude/narada/identity.md (most stable, requires human review)
-- ~/.claude/narada/mind.md (delicate beliefs file, evolves slowly)
-- ~/.claude/narada/suti.md (Suti's private observations)
+- ~/.narada/identity.md (most stable, requires human review)
+- ~/.narada/mind.md (delicate beliefs file, evolves slowly)
+- ~/.narada/suti.md (Suti's private observations)
 - Any file under src/, firmware/, scripts/, tests/ (code requires human-loop)
 - Any file under .ai/agents/, .ai/soul.md (per CLAUDE.md)
 - Any .env file or secrets.yaml file
