@@ -30,6 +30,119 @@ logger = logging.getLogger(__name__)
 DEFAULT_INTERVAL = 1800  # 30 minutes
 MAX_REVISIONS = 2
 
+# Where the executor writes research/reflection artifacts (per executor-boundaries.md)
+ARTIFACTS_DIR = Path.home() / ".narada" / "heartbeat" / "artifacts"
+NARADA_ROOT = Path.home() / ".narada"
+
+
+def _extract_tasks_section(content: str, section: str) -> str:
+    """Pull lines under ``## {section}`` from a markdown todo file.
+
+    Returns the section body (excluding the heading itself) up to the next
+    ``##`` heading. Empty string if the section isn't found.
+    """
+    import re
+    pattern = re.compile(
+        rf"^##\s+{re.escape(section)}\s*$(.+?)(?=^##\s|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    match = pattern.search(content)
+    if not match:
+        return ""
+    body = match.group(1).strip()
+    # Keep only task lines (- [ ] ...) and leading comment lines
+    lines = [line for line in body.splitlines() if line.strip()]
+    return "\n".join(lines)
+
+
+def _project_git_head(project_root: Path) -> str | None:
+    """Return git HEAD + working tree state for sandbox violation checks."""
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(project_root), capture_output=True, text=True, timeout=5,
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(project_root), capture_output=True, text=True, timeout=5,
+        )
+        if head.returncode == 0 and status.returncode == 0:
+            return f"{head.stdout.strip()}|{status.stdout.strip()}"
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+
+def check_sandbox_violations(project_state_before: str | None, project_root: Path) -> bool:
+    """Return True if the project files changed during execute — a sandbox
+    breach. Log loudly. This is detection, not prevention — the executor
+    has already done the write. But we want to know immediately.
+    """
+    after = _project_git_head(project_root)
+    if project_state_before is None or after is None:
+        return False  # couldn't check, skip silently
+    if project_state_before != after:
+        logger.warning(
+            "SANDBOX VIOLATION: project files changed during heartbeat execute. "
+            "Before: %s ... After: %s ...",
+            project_state_before[:80], after[:80],
+        )
+        return True
+    return False
+
+
+def ingest_new_artifacts(before: set[Path]) -> list[dict]:
+    """Ingest artifacts created during this cycle into the smriti memory tree.
+
+    Identifies files in ~/.narada/heartbeat/artifacts/ that weren't present
+    before the cycle started, runs ``smriti ingest`` on each. Failures are
+    logged but don't abort the heartbeat.
+
+    Returns a list of per-artifact result dicts for logging.
+    """
+    if not ARTIFACTS_DIR.exists():
+        return []
+
+    current = {p for p in ARTIFACTS_DIR.glob("*.md") if p.is_file()}
+    new_artifacts = sorted(current - before)
+
+    from svapna.heartbeat.delegate import _log_rate_limit, _looks_like_rate_limit
+
+    results = []
+    for artifact in new_artifacts:
+        logger.info("Ingesting artifact: %s", artifact.name)
+        try:
+            # Invoke smriti via subprocess — keeps svapna decoupled from smriti internals
+            proc = subprocess.run(
+                ["python", "-m", "smriti.cli", "ingest", str(artifact)],
+                capture_output=True,
+                text=True,
+                timeout=300,  # routing + cascade may take a bit
+            )
+            results.append({
+                "artifact": artifact.name,
+                "ok": proc.returncode == 0,
+                "stdout_tail": proc.stdout[-500:] if proc.stdout else "",
+                "stderr_tail": proc.stderr[-500:] if proc.stderr else "",
+            })
+            if proc.returncode != 0:
+                # Surface rate-limit errors that bubbled up from smriti's
+                # internal claude -p calls.
+                combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+                if _looks_like_rate_limit(combined):
+                    _log_rate_limit(source="smriti-ingest", detail=combined[:500])
+                logger.warning("Ingest failed for %s: %s", artifact.name, proc.stderr[:200])
+            else:
+                logger.info("Ingest succeeded for %s", artifact.name)
+        except subprocess.TimeoutExpired:
+            logger.warning("Ingest timed out for %s", artifact.name)
+            results.append({"artifact": artifact.name, "ok": False, "error": "timeout"})
+        except Exception as exc:
+            logger.warning("Ingest crashed for %s: %s", artifact.name, exc)
+            results.append({"artifact": artifact.name, "ok": False, "error": str(exc)})
+
+    return results
+
 
 def get_system_health() -> str:
     """Check GPU temperature and system status."""
@@ -73,6 +186,14 @@ class HeartbeatDaemon:
         """
         now = datetime.now(timezone.utc)
         logger.info("=== HEARTBEAT %s ===", now.isoformat())
+
+        # Kill switch — if ~/.narada/heartbeat/pause exists, skip this cycle.
+        # Lets Suti halt an errant loop without killing the daemon.
+        pause_file = NARADA_ROOT / "heartbeat" / "pause"
+        if pause_file.exists():
+            logger.info("Paused (kill switch at %s). Skipping cycle.", pause_file)
+            self.display.set_status("paused")
+            return {"action": "PAUSED", "topic": None}
 
         # 1. Read state
         state = {
@@ -129,13 +250,38 @@ class HeartbeatDaemon:
 
         # 7. Execute if approved
         result = None
+        ingest_results: list[dict] = []
+        sandbox_violated = False
         if judgment.approved:
             logger.info("Executing approved plan...")
             self.display.show_executing(desire.topic)
+
+            # Snapshot existing artifacts so we can find what this cycle creates
+            artifacts_before: set[Path] = (
+                {p for p in ARTIFACTS_DIR.glob("*.md") if p.is_file()}
+                if ARTIFACTS_DIR.exists() else set()
+            )
+
+            # Snapshot project git state — violations during execute surface here
+            from svapna.heartbeat.delegate import PROJECT_ROOT
+            project_state_before = _project_git_head(PROJECT_ROOT)
+
             result = self.delegate.execute_plan(plan, desire)
             cycle_cost += result.cost_usd
             logger.info("Result: %s ($%.4f)", result.summary, result.cost_usd)
             self.display.show_result(result.summary)
+
+            # Check if the executor broke out of the memory sandbox
+            sandbox_violated = check_sandbox_violations(project_state_before, PROJECT_ROOT)
+
+            # Feed new artifacts through smriti ingest — routes, links, cascades
+            ingest_results = ingest_new_artifacts(artifacts_before)
+            if ingest_results:
+                ok_count = sum(1 for r in ingest_results if r.get("ok"))
+                logger.info(
+                    "Ingested %d/%d new artifacts into smriti",
+                    ok_count, len(ingest_results),
+                )
 
         logger.info("Cycle cost: $%.4f", cycle_cost)
 
@@ -212,11 +358,34 @@ class HeartbeatDaemon:
         return "\n".join(lines)
 
     def _format_pending(self) -> str:
-        """Format pending tasks for state context."""
+        """Format pending tasks for state context.
+
+        Combines two sources:
+        1. Previously-desired actions that didn't complete (from SQLite memory)
+        2. The Active section of ~/.narada/tasks.md — the real todo list
+           routed here by smriti and edited by Suti/the executor.
+        """
+        lines: list[str] = []
+
+        # 1. Active tasks from the memory tree
+        tasks_file = NARADA_ROOT / "tasks.md"
+        if tasks_file.exists():
+            try:
+                content = tasks_file.read_text(encoding="utf-8")
+                active = _extract_tasks_section(content, "Active")
+                if active:
+                    lines.append("From ~/.narada/tasks.md:")
+                    lines.append(active)
+            except OSError:
+                pass
+
+        # 2. Previously-desired actions that didn't complete
         pending = self.memory.get_pending_tasks()
-        if not pending:
+        if pending:
+            lines.append("From recent heartbeats (not completed):")
+            for p in pending:
+                lines.append(f"- {p['action']}: {p['topic']} ({p['reason']})")
+
+        if not lines:
             return "no pending tasks"
-        lines = []
-        for p in pending:
-            lines.append(f"- {p['action']}: {p['topic']} ({p['reason']})")
         return "\n".join(lines)

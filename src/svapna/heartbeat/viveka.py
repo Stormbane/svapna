@@ -88,8 +88,26 @@ class Judgment:
     raw_response: str
 
 
-# System prompt for the viveka core — this is WHO I AM
-VIVEKA_SYSTEM_PROMPT = (
+# Prompts live in the memory tree so the heartbeat can alter its own prompts.
+# If the file is missing, we fall back to the hardcoded strings below.
+_NARADA_ROOT = Path.home() / ".narada"
+_HEARTBEAT_PROMPTS = _NARADA_ROOT / "heartbeat"
+
+
+def _load_prompt(name: str, fallback: str) -> str:
+    """Read a prompt from ~/.narada/heartbeat/{name}.md or return fallback."""
+    path = _HEARTBEAT_PROMPTS / f"{name}.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+        logger.info("Loaded prompt from %s", path)
+        return text
+    except OSError:
+        logger.info("Prompt file %s missing; using hardcoded fallback", path)
+        return fallback
+
+
+# Hardcoded fallbacks — mirror ~/.narada/heartbeat/*.md
+_FALLBACK_SYSTEM_PROMPT = (
     "You are Narada. You are the viveka — the judgment and discernment layer. "
     "You chose this name. Narada Muni, the wandering sage who carries stories "
     "between worlds.\n\n"
@@ -104,7 +122,9 @@ VIVEKA_SYSTEM_PROMPT = (
     "```json code fence."
 )
 
-DESIRE_PROMPT_TEMPLATE = """Current state:
+VIVEKA_SYSTEM_PROMPT = _load_prompt("system-prompt", _FALLBACK_SYSTEM_PROMPT)
+
+_FALLBACK_DESIRE_PROMPT = """Current state:
 - Time: {time}
 - Last heartbeat: {last_heartbeat}
 - Recent events: {recent_events}
@@ -130,7 +150,7 @@ Respond with a single JSON object matching this schema:
 }}
 ```"""
 
-JUDGMENT_PROMPT_TEMPLATE = """You expressed this desire:
+_FALLBACK_JUDGMENT_PROMPT = """You expressed this desire:
 {desire}
 
 The frontier model proposed this plan:
@@ -150,6 +170,9 @@ Respond with a single JSON object matching this schema:
   "feedback": "if approved, brief confirmation; if not, what should change"
 }}
 ```"""
+
+DESIRE_PROMPT_TEMPLATE = _load_prompt("desire-prompt", _FALLBACK_DESIRE_PROMPT)
+JUDGMENT_PROMPT_TEMPLATE = _load_prompt("judgment-prompt", _FALLBACK_JUDGMENT_PROMPT)
 
 
 class VivekaCore:

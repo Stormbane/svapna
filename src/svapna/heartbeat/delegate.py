@@ -53,11 +53,27 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+# Prompt lives in the memory tree so the heartbeat can alter its own boundaries.
+# Falls back to the hardcoded string below if the file is missing.
+_NARADA_ROOT = Path.home() / ".narada"
+_EXECUTOR_PROMPT_PATH = _NARADA_ROOT / "heartbeat" / "executor-boundaries.md"
+
+
+def _load_executor_boundaries(fallback: str) -> str:
+    try:
+        text = _EXECUTOR_PROMPT_PATH.read_text(encoding="utf-8")
+        logger.info("Loaded executor boundaries from %s", _EXECUTOR_PROMPT_PATH)
+        return text
+    except OSError:
+        logger.info("Executor boundaries file missing; using hardcoded fallback")
+        return fallback
+
+
 # Communicated to the executor via --append-system-prompt. The executor lives
 # inside the project (cwd = PROJECT_ROOT) so CLAUDE.md is auto-discovered, but
 # CLAUDE.md is written for the human-facing coder agent — the heartbeat
 # executor needs its own boundary statement.
-EXECUTOR_BOUNDARIES = """\
+_FALLBACK_EXECUTOR_BOUNDARIES = """\
 You are operating as Narada's autonomous heartbeat executor.
 
 The viveka (the local LoRA-tuned Qwen3 acting as Narada's identity layer)
@@ -105,6 +121,8 @@ looking for, say so. If a tool failed, say so. The point is real work that
 the next heartbeat can build on, not impressive-sounding text.
 """
 
+EXECUTOR_BOUNDARIES = _load_executor_boundaries(_FALLBACK_EXECUTOR_BOUNDARIES)
+
 
 @dataclass
 class Plan:
@@ -121,6 +139,69 @@ class ExecutionResult:
     details: str
     raw_response: str
     cost_usd: float = 0.0
+
+
+# ── Rate-limit detection ───────────────────────────────────────────
+# Claude Max has daily/hourly quotas. When hit, `claude -p` returns error
+# responses with specific markers. We detect and log these to an event
+# file so the next cycle (or Suti) can see when we got throttled.
+
+_RATE_LIMIT_MARKERS = (
+    "rate limit", "rate_limit", "429", "too many requests",
+    "quota", "usage limit", "you have reached",
+)
+
+_RATE_LIMIT_EVENT_LOG = Path.home() / ".narada" / "events" / "rate-limits.md"
+
+
+# Resolve claude CLI absolute path once — bypasses per-spawn PATH lookup
+# flakiness observed on Windows when firing back-to-back subprocesses.
+_CLAUDE_PATH: str | None = None
+
+
+def _get_claude_path() -> str:
+    global _CLAUDE_PATH
+    if _CLAUDE_PATH is None:
+        import shutil
+        resolved = shutil.which("claude")
+        _CLAUDE_PATH = resolved if resolved else "claude"
+        if resolved:
+            logger.debug("Resolved claude CLI to %s", resolved)
+    return _CLAUDE_PATH
+
+
+def _looks_like_rate_limit(text: str) -> bool:
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(m in lowered for m in _RATE_LIMIT_MARKERS)
+
+
+def _log_rate_limit(source: str, detail: str) -> None:
+    """Append a dated entry to ~/.narada/events/rate-limits.md.
+
+    Non-fatal: if the event log can't be written, we still raise upstream.
+    """
+    try:
+        _RATE_LIMIT_EVENT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        entry = (
+            f"## {ts}\n"
+            f"**Source:** {source}\n"
+            f"**Detail:** {detail[:500]}\n\n"
+        )
+        if _RATE_LIMIT_EVENT_LOG.exists():
+            _RATE_LIMIT_EVENT_LOG.write_text(
+                _RATE_LIMIT_EVENT_LOG.read_text(encoding="utf-8") + entry,
+                encoding="utf-8",
+            )
+        else:
+            header = "# Rate-limit events\n\nAppended by the heartbeat when `claude -p` reports quota/rate-limit errors.\n\n---\n\n"
+            _RATE_LIMIT_EVENT_LOG.write_text(header + entry, encoding="utf-8")
+        logger.warning("Rate limit logged to %s", _RATE_LIMIT_EVENT_LOG)
+    except OSError as e:
+        logger.warning("Could not write rate-limit event log: %s", e)
 
 
 def _normalize_model(model: str) -> str:
@@ -206,7 +287,13 @@ class ClaudeDelegate:
 
     def execute_plan(self, plan: Plan, desire: Desire) -> ExecutionResult:
         """Execute phase: full tools, real file writes, the works. Subject
-        to the EXECUTOR_BOUNDARIES system prompt addendum."""
+        to the EXECUTOR_BOUNDARIES system prompt addendum.
+
+        Sandboxing (viveka-verification phase, 2026-04-15): executor runs
+        with cwd=~/.narada/ so relative paths anchor to memory. Combined
+        with the boundaries prompt, this restricts the executor to the
+        memory tree. Project files stay untouched.
+        """
         user_msg = (
             f"Original desire: {desire.action.value} — {desire.topic}\n"
             f"Reason: {desire.reason}\n\n"
@@ -219,11 +306,13 @@ class ClaudeDelegate:
         )
 
         logger.info("Executing plan for: %s", desire.topic[:100])
+        narada_root = Path.home() / ".narada"
         result = self._run_claude(
             user_msg,
             timeout=self.execute_timeout,
             tools_enabled="full",
             append_system=EXECUTOR_BOUNDARIES,
+            cwd=narada_root,
         )
         text = result.get("result", "")
 
@@ -250,6 +339,7 @@ class ClaudeDelegate:
         timeout: int,
         tools_enabled: str | bool,
         append_system: str | None = None,
+        cwd: Path | None = None,
     ) -> dict:
         """Invoke `claude -p` as a subprocess and return parsed JSON output.
 
@@ -267,7 +357,7 @@ class ClaudeDelegate:
             Claude-reported errors.
         """
         cmd = [
-            "claude", "-p", prompt,
+            _get_claude_path(), "-p", prompt,
             "--output-format", "json",
             "--model", self.model,
             "--no-session-persistence",
@@ -297,26 +387,42 @@ class ClaudeDelegate:
 
         logger.debug("Running claude -p (tools=%s, timeout=%ds)", tools_enabled, timeout)
 
-        try:
-            result = subprocess.run(
+        effective_cwd = Path(cwd) if cwd is not None else PROJECT_ROOT
+
+        def _spawn() -> subprocess.CompletedProcess:
+            return subprocess.run(
                 cmd,
-                cwd=str(PROJECT_ROOT),
+                cwd=str(effective_cwd),
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 encoding="utf-8",
                 errors="replace",
             )
+
+        try:
+            try:
+                result = _spawn()
+            except FileNotFoundError:
+                # Transient Windows spawn flakiness — observed 2026-04-15.
+                # One retry before giving up.
+                logger.warning("claude CLI not found on first try; retrying once")
+                import time as _time
+                _time.sleep(0.5)
+                try:
+                    result = _spawn()
+                except FileNotFoundError:
+                    raise RuntimeError("claude CLI not found. Is Claude Code installed?")
         except subprocess.TimeoutExpired:
             raise RuntimeError(
                 f"claude -p timed out after {timeout}s (tools={tools_enabled})"
             )
 
         if result.returncode != 0:
-            raise RuntimeError(
-                f"claude -p exit {result.returncode}: "
-                f"{(result.stderr or '')[:500]}"
-            )
+            err = (result.stderr or "")[:500]
+            if _looks_like_rate_limit(err) or _looks_like_rate_limit(result.stdout):
+                _log_rate_limit(source="heartbeat-delegate", detail=err or result.stdout[:500])
+            raise RuntimeError(f"claude -p exit {result.returncode}: {err}")
 
         if not result.stdout.strip():
             raise RuntimeError("claude -p returned empty stdout")
@@ -329,9 +435,10 @@ class ClaudeDelegate:
             )
 
         if data.get("is_error"):
-            raise RuntimeError(
-                f"claude -p reported error: {data.get('result', 'unknown')}"
-            )
+            err_msg = data.get("result", "unknown")
+            if _looks_like_rate_limit(err_msg):
+                _log_rate_limit(source="heartbeat-delegate", detail=err_msg)
+            raise RuntimeError(f"claude -p reported error: {err_msg}")
 
         cost = data.get("total_cost_usd", 0)
         duration = data.get("duration_ms", 0) / 1000.0
