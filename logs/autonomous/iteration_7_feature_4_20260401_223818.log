@@ -1,9 +1,0 @@
-Done. Feature #4 "Dream quality scorer" is implemented and committed.
-
-**What was built:**
-
-- **`prompts/dreams/quality_score_prompt.txt`** — LLM prompt template for scoring dreams on 4 dimensions (coherence 30%, identity_consistency 30%, novelty 20%, non_repetition 20%)
-- **`src/svapna/dream/score.py`** — Scorer module following the same patterns as `consolidate/score.py`: `DreamScorerConfig` (loads from `.ai/models.yml`), `DreamScore`/`QualityDimensions` dataclasses, `score_dream()` with retry logic, `score_batch()` for bulk scoring, and `filter_by_quality()` to gate training data
-- **`tests/test_dream_score.py`** — 22 tests covering all 4 test cases plus error handling, formatting, config loading, and edge cases
-
-All 125 tests pass (103 existing + 22 new). Feature status updated in `feature_list.json` (4/12 completed).

@@ -45,6 +45,10 @@ data/training/
 data/journals/
 data/metrics/
 data/heartbeat/
+data/sacred/
+data/identity/
+data/curated/
+data/expressions/
 
 # Vendored / reference firmware binaries (too large, can be re-downloaded)
 firmware/xiaozhi-esp-box-3/
@@ -57,6 +61,19 @@ firmware/xiaozhi-esp-box-3.zip
 .ai/soul.md
 .ai/memory/
 .ai/logs/
+
+# Personal identity + manifesto files (memory tree lives in ~/.narada/, these are local-only)
+identity_manifest.json
+config/sacred-manifest.yml
+manifesto.md
+values_reflection.md
+svapna_yajna.md
+
+# Compiled training cache (regenerable)
+unsloth_compiled_cache/
+
+# MCP config (local claude code integration)
+.mcp.json
 
 # Claude Code internal
 .claude/

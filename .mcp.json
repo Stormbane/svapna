@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "smriti": {
-      "command": "python",
-      "args": ["-m", "smriti.mcp_server"]
-    }
-  }
-}
