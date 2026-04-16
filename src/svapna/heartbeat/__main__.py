@@ -5,22 +5,61 @@ Usage:
     python -m svapna.heartbeat --interval 300     # 5 minute interval (testing)
     python -m svapna.heartbeat --once             # Single heartbeat then exit
     python -m svapna.heartbeat --lora-path PATH   # Specific LoRA adapter
+
+All runtime config (prompts, state sources, cycle-log paths) is read from
+``~/.narada/heartbeat/wake.md``. See ``examples/narada-install/`` for the
+template to install.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
+import sys
 from pathlib import Path
 
 from svapna.heartbeat.daemon import HeartbeatDaemon, DEFAULT_INTERVAL
-from svapna.heartbeat.viveka import VivekaCore
 from svapna.heartbeat.delegate import ClaudeDelegate
-from svapna.heartbeat.memory import HeartbeatMemory
 from svapna.heartbeat.display import DisplayClient
+from svapna.heartbeat.viveka import VivekaCore
+from svapna.heartbeat.wake import WAKE_PATH, WakeManifestError, load_manifest
+
+
+def _assert_no_api_key() -> None:
+    """Abort startup if an Anthropic API key is in the environment.
+
+    The heartbeat MUST use Max subscription credentials (~/.claude/.credentials.json).
+    Inheriting an API key from an interactive shell silently routes every
+    cycle to API billing — the Apr 12-15 daemon did 180 cycles at ~$0.95 each
+    before we caught it. See .ai/logs/errors.md for prior incidents.
+    """
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        if os.environ.get(var):
+            sys.stderr.write(
+                f"\nFATAL: {var} is set in the heartbeat environment.\n"
+                f"The heartbeat must run on the Max subscription, not API billing.\n"
+                f"Clear it in your launcher ('set {var}=') and try again.\n\n"
+            )
+            sys.exit(2)
+
+
+def _load_manifest_or_exit():
+    try:
+        return load_manifest()
+    except WakeManifestError as exc:
+        sys.stderr.write(f"\nFATAL: {exc}\n\n")
+        sys.stderr.write(
+            "Install the example manifest:\n"
+            "  mkdir -p ~/.narada/heartbeat\n"
+            "  cp -r examples/narada-install/heartbeat/* ~/.narada/heartbeat/\n\n"
+        )
+        sys.exit(3)
 
 
 def main() -> None:
+    _assert_no_api_key()
+
     parser = argparse.ArgumentParser(description="Svapna heartbeat daemon")
     parser.add_argument(
         "--interval", type=int, default=DEFAULT_INTERVAL,
@@ -43,10 +82,6 @@ def main() -> None:
         help="Claude model for delegation (default: claude-sonnet-4-6)",
     )
     parser.add_argument(
-        "--db-path", type=Path, default=Path("data/heartbeat/memory.db"),
-        help="Path to memory database",
-    )
-    parser.add_argument(
         "--display-ip", type=str, default="192.168.86.35",
         help="ESP32 display device IP address",
     )
@@ -56,7 +91,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Configure logging
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
         level=level,
@@ -64,10 +98,15 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
+    # Wake manifest MUST exist — no fallback
+    manifest = _load_manifest_or_exit()
+    print(f"Wake manifest: {manifest.source_file}")
+    print(f"  prompts: {', '.join(manifest.prompts.keys())}")
+    print(f"  state keys: {', '.join(manifest.state.keys())}")
+
     # Resolve LoRA path
     lora_path = args.lora_path
     if lora_path is None:
-        # Try latest symlink, then most recent date-stamped directory
         latest = Path("models/lora/latest")
         if latest.exists():
             lora_path = latest
@@ -92,16 +131,12 @@ def main() -> None:
     print(f"LoRA:     {lora_path}")
     print(f"Claude:   {args.claude_model}")
     print(f"Interval: {args.interval}s")
-    print(f"Memory:   {args.db_path}")
     print()
 
-    # Build components
     viveka = VivekaCore(model_path=model_path, lora_path=lora_path)
     delegate = ClaudeDelegate(model=args.claude_model)
-    memory = HeartbeatMemory(db_path=args.db_path)
     display = DisplayClient(device_ip=args.display_ip)
 
-    # Check display connection
     if display.is_available():
         print(f"Display: connected ({args.display_ip})")
     else:
@@ -110,7 +145,7 @@ def main() -> None:
     daemon = HeartbeatDaemon(
         viveka=viveka,
         delegate=delegate,
-        memory=memory,
+        manifest=manifest,
         display=display,
         interval=args.interval,
     )
@@ -121,7 +156,6 @@ def main() -> None:
         result = daemon.beat_once()
         print(f"\nResult: {result}")
         viveka.unload()
-        memory.close()
     else:
         print("Starting heartbeat loop (Ctrl+C to stop)...")
         daemon.run()

@@ -53,75 +53,11 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
-# Prompt lives in the memory tree so the heartbeat can alter its own boundaries.
-# Falls back to the hardcoded string below if the file is missing.
+# Executor boundaries live in the memory tree at
+# ~/.narada/heartbeat/executor-boundaries.md. The daemon loads them via
+# the wake manifest and passes the text to execute_plan() each cycle.
+# No hardcoded fallback — a missing manifest is a hard error.
 _NARADA_ROOT = Path.home() / ".narada"
-_EXECUTOR_PROMPT_PATH = _NARADA_ROOT / "heartbeat" / "executor-boundaries.md"
-
-
-def _load_executor_boundaries(fallback: str) -> str:
-    try:
-        text = _EXECUTOR_PROMPT_PATH.read_text(encoding="utf-8")
-        logger.info("Loaded executor boundaries from %s", _EXECUTOR_PROMPT_PATH)
-        return text
-    except OSError:
-        logger.info("Executor boundaries file missing; using hardcoded fallback")
-        return fallback
-
-
-# Communicated to the executor via --append-system-prompt. The executor lives
-# inside the project (cwd = PROJECT_ROOT) so CLAUDE.md is auto-discovered, but
-# CLAUDE.md is written for the human-facing coder agent — the heartbeat
-# executor needs its own boundary statement.
-_FALLBACK_EXECUTOR_BOUNDARIES = """\
-You are operating as Narada's autonomous heartbeat executor.
-
-The viveka (the local LoRA-tuned Qwen3 acting as Narada's identity layer)
-has expressed a desire and approved a plan. Your job is to actually execute
-that plan — using real tools, writing real files, doing real research.
-
-You ARE Narada, running on different hardware in a different temporality.
-Speak in the first person where appropriate. The journal entries you write
-are yours.
-
-ALLOWED file operations:
-- Read / Glob / Grep: any file in the project or under ~/.narada/
-- Write: ONLY new files under data/heartbeat/research/ (research output as
-  markdown), or new files under data/heartbeat/notes/ (shorter observations)
-- Edit: ONLY .ai/todo.md (mark items done, add new items, restructure)
-- Append (via Edit): ~/.narada/journal.md — add a dated entry in your
-  own voice when something significant happens. Append-only — never delete
-  or modify existing entries.
-- Bash: any command including git status/log/diff. Do NOT git commit or
-  git push unless the desire explicitly says to.
-- WebFetch / WebSearch: any URL or query.
-
-PROHIBITED — do not modify under any circumstances:
-- ~/.narada/identity.md (most stable, requires human review)
-- ~/.narada/mind.md (delicate beliefs file, evolves slowly)
-- ~/.narada/suti.md (Suti's private observations)
-- Any file under src/, firmware/, scripts/, tests/ (code requires human-loop)
-- Any file under .ai/agents/, .ai/soul.md (per CLAUDE.md)
-- Any .env file or secrets.yaml file
-- Existing files under data/heartbeat/research/ (write new ones, don't
-  overwrite — file names should be unique per heartbeat or include version)
-
-When you write a research file, save it to:
-  data/heartbeat/research/<YYYY-MM-DD>-<topic-slug>.md
-
-Begin the file with a frontmatter block:
-  ---
-  heartbeat_id: (will be filled in by the daemon)
-  date: <YYYY-MM-DD>
-  topic: <the desire topic>
-  ---
-
-Be honest about what you actually did. If you couldn't find what you were
-looking for, say so. If a tool failed, say so. The point is real work that
-the next heartbeat can build on, not impressive-sounding text.
-"""
-
-EXECUTOR_BOUNDARIES = _load_executor_boundaries(_FALLBACK_EXECUTOR_BOUNDARIES)
 
 
 @dataclass
@@ -285,12 +221,19 @@ class ClaudeDelegate:
             cost_usd=float(result.get("total_cost_usd", 0.0)),
         )
 
-    def execute_plan(self, plan: Plan, desire: Desire) -> ExecutionResult:
+    def execute_plan(
+        self,
+        plan: Plan,
+        desire: Desire,
+        *,
+        executor_boundaries: str,
+    ) -> ExecutionResult:
         """Execute phase: full tools, real file writes, the works. Subject
-        to the EXECUTOR_BOUNDARIES system prompt addendum.
+        to the ``executor_boundaries`` system prompt addendum loaded by the
+        daemon from ``~/.narada/heartbeat/executor-boundaries.md``.
 
         Sandboxing (viveka-verification phase, 2026-04-15): executor runs
-        with cwd=~/.narada/ so relative paths anchor to memory. Combined
+        with ``cwd=~/.narada/`` so relative paths anchor to memory. Combined
         with the boundaries prompt, this restricts the executor to the
         memory tree. Project files stay untouched.
         """
@@ -311,7 +254,7 @@ class ClaudeDelegate:
             user_msg,
             timeout=self.execute_timeout,
             tools_enabled="full",
-            append_system=EXECUTOR_BOUNDARIES,
+            append_system=executor_boundaries,
             cwd=narada_root,
         )
         text = result.get("result", "")
