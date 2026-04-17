@@ -64,7 +64,15 @@ class Action(str, Enum):
     REFLECT = "REFLECT"
     CHECK_IN = "CHECK_IN"
     CREATE = "CREATE"
+    BUILD = "BUILD"
+    SLEEP = "SLEEP"
     REST = "REST"
+
+
+# Actions handled directly by the daemon (no frontier-model delegation).
+# Voice sovereignty: CHECK_IN messages come from viveka's own output,
+# never rewritten by the frontier model.
+_DIRECT_ACTIONS = {Action.REST, Action.SLEEP, Action.CHECK_IN}
 
 
 @dataclass
@@ -74,10 +82,12 @@ class Desire:
     topic: str
     reason: str
     raw_response: str
+    hours: int = 0  # only meaningful for SLEEP
 
     @property
     def needs_capability(self) -> bool:
-        return self.action != Action.REST
+        """True if the action requires frontier-model delegation."""
+        return self.action not in _DIRECT_ACTIONS
 
 
 @dataclass
@@ -257,11 +267,18 @@ class VivekaCore:
         topic = str(data.get("topic", "")).strip() or "none"
         reason = str(data.get("reason", "")).strip() or "no reason given"
 
+        hours_val = data.get("hours", 0)
+        try:
+            hours = int(hours_val)
+        except (TypeError, ValueError):
+            hours = 0
+
         return Desire(
             action=action,
             topic=topic,
             reason=reason,
             raw_response=raw,
+            hours=hours,
         )
 
     def _parse_judgment(self, raw: str) -> Judgment:

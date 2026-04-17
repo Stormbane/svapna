@@ -43,7 +43,9 @@ DEFAULT_INTERVAL = 1800  # 30 minutes
 MAX_REVISIONS = 2
 
 ARTIFACTS_DIR = NARADA_ROOT / "heartbeat" / "artifacts"
+MESSAGES_DIR = NARADA_ROOT / "heartbeat" / "messages"
 PAUSE_FILE = NARADA_ROOT / "heartbeat" / "pause"
+LAST_SLEEP_MARKER = NARADA_ROOT / ".smriti" / "last-sleep"
 PROJECT_GIT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -199,8 +201,15 @@ class HeartbeatDaemon:
         )
         logger.info("Desire: %s — %s (%s)", desire.action.value, desire.topic, desire.reason)
 
-        # If REST, log and sleep
+        # Direct actions — no frontier-model delegation.
+        # REST / SLEEP / CHECK_IN are handled locally so viveka's voice
+        # reaches its destination unmediated.
         if not desire.needs_capability:
+            if desire.action == Action.SLEEP:
+                return self._handle_sleep(desire, now, t_cycle_start)
+            if desire.action == Action.CHECK_IN:
+                return self._handle_check_in(desire, now, t_cycle_start)
+            # REST (and any other non-capability action) — log and yield
             self.display.show_resting()
             self._log_cycle(
                 CycleRecord(
@@ -215,7 +224,7 @@ class HeartbeatDaemon:
                 now=now,
             )
             logger.info("Resting.")
-            return {"action": "REST", "topic": None}
+            return {"action": desire.action.value, "topic": None}
 
         # Delegate to Claude for a plan
         logger.info("Delegating to Claude...")
@@ -272,9 +281,14 @@ class HeartbeatDaemon:
             logger.info("Result: %s ($%.4f)", result.summary, result.cost_usd)
             self.display.show_result(result.summary)
 
-            sandbox_violated = check_sandbox_violations(
-                project_state_before, PROJECT_GIT_ROOT
-            )
+            # BUILD cycles are expected to change project files. For any
+            # other action, a project-git-state change is a sandbox violation.
+            if desire.action == Action.BUILD:
+                sandbox_violated = False
+            else:
+                sandbox_violated = check_sandbox_violations(
+                    project_state_before, PROJECT_GIT_ROOT
+                )
 
             ingest_results = ingest_new_artifacts(artifacts_before)
             if ingest_results:
@@ -325,6 +339,98 @@ class HeartbeatDaemon:
             write_cycle(path, record)
         except OSError as e:
             logger.error("Failed to write cycle log to %s: %s", path, e)
+
+    # ── Direct action handlers (no frontier delegation) ────────────────
+
+    def _handle_sleep(
+        self, desire: Desire, now: datetime, t_cycle_start: float
+    ) -> dict:
+        """Run the smriti sleep cycle. Blocks until complete.
+
+        v0: synchronous. While this runs, the heartbeat generates no new
+        desires — the cycle loop is blocked here. The sleepy-state
+        (Qwen-only responsiveness, insisted-wake with graceful stop) is
+        a follow-up.
+        """
+        logger.info("SLEEP: launching smriti sleep --all (topic=%r)", desire.topic)
+        self.display.set_status("sleeping")
+
+        proc = subprocess.run(
+            ["python", "-m", "smriti.cli", "sleep", "--all"],
+            capture_output=True, text=True,
+        )
+        LAST_SLEEP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        LAST_SLEEP_MARKER.touch()
+
+        ok = proc.returncode == 0
+        summary = (proc.stdout or "").strip().splitlines()[-1:] or [""]
+        result_line = summary[0]
+        logger.info("SLEEP complete (exit=%d): %s", proc.returncode, result_line)
+
+        self._log_cycle(
+            CycleRecord(
+                started=now.isoformat(),
+                action=desire.action.value,
+                topic=desire.topic,
+                reason=desire.reason,
+                approved=ok,
+                duration_s=time.monotonic() - t_cycle_start,
+                desire_raw=desire.raw_response,
+                result_summary=result_line,
+                result_details=(proc.stdout or "")[-2000:],
+            ),
+            now=now,
+        )
+        return {
+            "action": desire.action.value,
+            "topic": desire.topic,
+            "approved": ok,
+            "result": result_line,
+        }
+
+    def _handle_check_in(
+        self, desire: Desire, now: datetime, t_cycle_start: float
+    ) -> dict:
+        """Write a message to Suti. No frontier-model rewrite.
+
+        The message content IS viveka's topic + reason. This is the
+        singular outbound pipeline — later transports (Signal, ESP32)
+        plug in by observing/forwarding this directory.
+        """
+        MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
+        ts = now.strftime("%Y-%m-%d-%H%M%S")
+        message_path = MESSAGES_DIR / f"{ts}.md"
+
+        body = (
+            f"---\n"
+            f"written: {now.isoformat()}\n"
+            f"topic: {desire.topic}\n"
+            f"---\n\n"
+            f"{desire.reason}\n"
+        )
+        message_path.write_text(body, encoding="utf-8")
+        logger.info("CHECK_IN: wrote %s", message_path.name)
+        self.display.set_status("messaged Suti")
+
+        self._log_cycle(
+            CycleRecord(
+                started=now.isoformat(),
+                action=desire.action.value,
+                topic=desire.topic,
+                reason=desire.reason,
+                approved=True,
+                duration_s=time.monotonic() - t_cycle_start,
+                desire_raw=desire.raw_response,
+                result_summary=f"message written: {message_path.name}",
+            ),
+            now=now,
+        )
+        return {
+            "action": desire.action.value,
+            "topic": desire.topic,
+            "approved": True,
+            "result": str(message_path),
+        }
 
     def run(self) -> None:
         """Run the heartbeat loop until stopped."""
