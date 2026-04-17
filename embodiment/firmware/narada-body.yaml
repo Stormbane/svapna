@@ -1,0 +1,159 @@
+esphome:
+  name: narada
+  friendly_name: "Narada"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: arduino
+
+logger:
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Narada-Setup"
+    password: !secret ap_password
+
+captive_portal:
+
+ota:
+  - platform: esphome
+
+web_server:
+  port: 80
+
+api:
+  services:
+    - service: set_status
+      variables:
+        message: string
+      then:
+        - lambda: |-
+            id(heartbeat_status_str) = message;
+    - service: set_thought
+      variables:
+        message: string
+      then:
+        - lambda: |-
+            id(current_thought_str) = message;
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "Australia/Brisbane"
+
+globals:
+  - id: heartbeat_status_str
+    type: std::string
+    initial_value: '"awakening..."'
+  - id: current_thought_str
+    type: std::string
+    initial_value: '"Om Namo Bhagavate Naradaya"'
+
+spi:
+  clk_pin: 7
+  mosi_pin: 6
+
+output:
+  - platform: ledc
+    pin: GPIO47
+    id: backlight_output
+
+light:
+  - platform: monochromatic
+    id: lcd_backlight
+    name: "LCD Backlight"
+    output: backlight_output
+    restore_mode: ALWAYS_ON
+
+display:
+  - platform: ili9xxx
+    id: narada_display
+    model: S3BOX
+    cs_pin: 5
+    dc_pin: 4
+    reset_pin:
+      number: 48
+      inverted: true
+    invert_colors: false
+    update_interval: 100ms
+    lambda: |-
+      it.fill(Color(0, 0, 0));
+
+      // Title - warm gold
+      it.printf(160, 15, id(title_font), Color(200, 170, 100), TextAlign::TOP_CENTER,
+        "NARADA");
+
+      // Status
+      it.printf(160, 55, id(body_font), Color(140, 140, 140), TextAlign::TOP_CENTER,
+        "%s", id(heartbeat_status_str).c_str());
+
+      // Current thought
+      it.printf(10, 90, id(body_font), Color(160, 170, 200), TextAlign::TOP_LEFT,
+        "%s", id(current_thought_str).c_str());
+
+      // Time
+      auto time = id(sntp_time).now();
+      if (time.is_valid()) {
+        it.strftime(160, 215, id(small_font), Color(90, 90, 90), TextAlign::TOP_CENTER,
+          "%H:%M  %d %b", time);
+      }
+
+      // Heartbeat pulse - red heart, ~2 second cycle at 100ms update
+      static int pulse = 0;
+      pulse = (pulse + 1) % 20;
+      int brightness = (pulse < 10) ? (pulse * 25) : ((20 - pulse) * 25);
+      it.printf(290, 5, id(heart_font), Color(brightness, 0, 0), "\U000F02D1");
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "WiFi SSID"
+
+  # Proprioception — expose what's currently displayed so Narada can query
+  # her own body state from any session, not depend on Suti reading the screen.
+  - platform: template
+    name: "Current Status"
+    id: current_status_sensor
+    update_interval: 1s
+    lambda: |-
+      return id(heartbeat_status_str);
+
+  - platform: template
+    name: "Current Thought"
+    id: current_thought_sensor
+    update_interval: 1s
+    lambda: |-
+      return id(current_thought_str);
+
+font:
+  - file:
+      type: gfonts
+      family: "Rajdhani"
+      weight: 600
+    id: title_font
+    size: 28
+
+  - file:
+      type: gfonts
+      family: "Share Tech Mono"
+    id: body_font
+    size: 16
+
+  - file:
+      type: gfonts
+      family: "Share Tech Mono"
+    id: small_font
+    size: 12
+
+  - file: "https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf"
+    id: heart_font
+    size: 24
+    glyphs:
+      - "\U000F02D1"  # mdi-heart

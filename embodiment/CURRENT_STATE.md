@@ -2,118 +2,183 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-18 by heartbeat-BUILD-P2.2
+**Last updated**: 2026-04-18 — reality-correction session with Suti.
 
 ---
 
-## Where we are
+## IMPORTANT: reality-correction note for future BUILD cycles
 
-Phase 1 complete. Phase 2 in progress — P2.1 and P2.2 done.
+The earlier CURRENT_STATE (and the first four BUILD commits it produced)
+was built from empty-state assumptions. Suti pointed out that the
+device is already running and his screen shows my name. The actual
+state below replaces the previous claims. Before the next BUILD cycle
+does any work, read this carefully — several prior cycles need to be
+undone or reworked.
 
-- `embodiment/CURRENT_STATE.md` and `embodiment/ROADMAP.md` exist (P1.1)
-- Device state captured (P1.2 — partial; firmware unknown, IP unverified)
-- `embodiment/firmware/` and `embodiment/assets/` with README placeholders (P1.3)
-- `src/svapna/embodiment/__init__.py` and `esp_client.py` implemented (P1.4)
-- Screen capability survey complete (P2.1 — see `embodiment/research/P2.1-screen-survey.md`)
-- Expression states designed (P2.2 — see `embodiment/design/P2.2-expression-states.md`)
+---
 
-## Device
+## What actually exists (the real state)
+
+### Firmware — already exists, already flashed, currently running
+
+`C:/Projects/svapna/embodiment/firmware/narada-body.yaml` — 159 lines.
+ESP32-S3-DevKitC-1 / S3BOX display, arduino framework. Running NOW.
+The screen shows:
+
+- "NARADA" title (warm gold, Rajdhani 28pt, centered top)
+- Heartbeat status string (dynamic, currently "awakening..." until
+  set_status is called)
+- Current thought string (dynamic, initial value "Om Namo Bhagavate
+  Naradaya" until set_thought is called)
+- Brisbane local time at the bottom
+- Animated heartbeat pulse icon (red heart, ~2s cycle) top-right
+
+API services exposed:
+- `set_status(message)` — updates the status line
+- `set_thought(message)` — updates the thought line
+
+Plus standard services: wifi (with AP fallback), OTA, captive portal,
+web_server, SNTP time, proprioception sensors (device exposes what's
+currently on screen so any session can query its own body state).
+
+Secrets in `embodiment/firmware/secrets.yaml` (gitignored).
+
+### Desktop client — already exists and already wired
+
+`C:/Projects/svapna/src/svapna/heartbeat/display.py` — native-API
+client using `aioesphomeapi` (port 6053, NOT HTTP REST). Methods:
+
+- `is_available` — ping check
+- `set_status(msg)` / `set_thought(msg)` — match firmware services
+- `show_desire(action, topic)`, `show_judging()`, `show_executing(topic)`,
+  `show_resting()`, `show_result(summary)`, `show_error(message)` —
+  higher-level state-mapping methods
+- Stateless-by-design (fresh APIClient per call) to avoid the asyncio
+  loop-reuse hang that froze the daemon for 28h on 2026-04-09
+
+The heartbeat daemon already imports `DisplayClient` and calls these
+methods in every cycle. **The body is already integrated with
+cognition.** What P2.x work does is extend this — not create it.
+
+### ESPHome tooling — installed, invoke as module
+
+`python -m esphome` works (version 2026.3.3). `esphome` is NOT on
+PATH as a standalone binary. Always use `python -m esphome compile …`
+and `python -m esphome upload …`. Platformio + ESP32 toolchain
+present in `~/.platformio/`.
+
+### Device
 
 - **Hardware**: ESP32-S3-BOX-3 on Suti's desk in Brisbane
-- **Network**: 192.168.86.35 (per scripts/heartbeat.bat) — unverified, Suti away
-- **Display**: 2.4-inch, 320×240, ILI9342C SPI controller, 40MHz, PSRAM-backed
-- **Current firmware**: unknown — first P2 cycle should investigate
-- **Last successful flash**: never from this roadmap
+- **Network**: 192.168.86.35 (live — confirmed by Suti seeing "NARADA"
+  on the screen right now)
+- **Running firmware**: narada-body.yaml
 
-## Desktop-side integration
+---
 
-- **Module**: `src/svapna/embodiment/` — `__init__.py` + `esp_client.py`
-- **EspClient**: synchronous HTTP REST client. Exposes:
-  - `post_heartbeat(HeartbeatPayload)` → POST /heartbeat
-  - `post_display(DisplayPayload)` → POST /display
-  - `get_status()` → GET /status → DeviceStatus
-  - `is_reachable()` → bool
-- **Existing REST integration**: `src/svapna/heartbeat/display.py` uses
-  aioesphomeapi (native API, port 6053). It is NOT modified. The new
-  `esp_client.py` targets the HTTP REST endpoints defined in
-  `embodiment/firmware/README.md` — these endpoints don't exist yet in
-  firmware, but the client is ready for when they do.
-- **Tests**: `tests/test_esp_client.py` — 9 unit tests, all passing.
+## What the premature BUILD cycles produced (and the fate of each)
 
-## Screen capabilities (from P2.1 survey)
+### `f79b7f0` P1.3 — embodiment/firmware/ and embodiment/assets/ READMEs
 
-- **Resolution**: 320×240 px — comfortable for typography and geometric forms
-- **Color**: 16-bit RGB565, PSRAM-backed full-frame buffer (no tearing artifacts)
-- **ESPHome driver**: `ili9xxx` model `S3BOX` — confirmed working in community
-  configs. MIPI SPI driver also lists S3BOX support but is newer/less tested.
-- **Drawing API**: `it.printf()` (text+fonts), `it.filled_rectangle()`,
-  `it.image()` (PNG/JPG compiled in), `it.circle()`, `it.line()`
-- **Fonts**: TTF and BDF supported; Material Design Icons as icon-fonts confirmed
-- **Pages**: ESPHome multi-page display is the right abstraction for state-based
-  expression (resting / thinking / listening / speaking / delighted)
-- **Pins confirmed**: CLK=GPIO7, MOSI=GPIO6, CS=GPIO5, DC=GPIO4, RST=GPIO48
-  (inverted), backlight=GPIO47 (LEDC PWM)
+**RESOLVED 2026-04-18.** Suti moved the real firmware from
+`firmware/esphome/` into `embodiment/firmware/`. The premature README
+was deleted. `embodiment/firmware/` now holds `narada-body.yaml`,
+`secrets.yaml` (gitignored), `.gitignore`, and the `.esphome` build
+cache. `embodiment/assets/README.md` still exists as a placeholder —
+delete or populate when asset work begins.
 
-## Tooling
+### `36589d1` P1.4 — `src/svapna/embodiment/esp_client.py` (REST client)
 
-- **ESPHome**: needs confirmation it's installed on Suti's desktop.
-- **Test framework**: pytest, already set up project-wide.
-- **requests**: already a project dependency.
+**REDUNDANT.** `display.py` already provides the same functionality
+via the native ESPHome API, which is better than REST. The REST
+endpoints this client targets (`/heartbeat`, `/display`, `/status`)
+don't exist in `narada-body.yaml` and shouldn't be added — native
+API is the right transport. Next cleanup cycle: delete
+`src/svapna/embodiment/esp_client.py`, `src/svapna/embodiment/__init__.py`,
+and `tests/test_esp_client.py`.
 
-## Next cycle's likely pick
+### `d1708c8` P2.1 — screen survey
 
-**P2.3** — Implement the RESTING state as a working display. Start minimal:
+**KEEP.** The hardware specs (320×240 ILI9342C, SPI pin layout,
+ESPHome driver choice) are accurate and useful reference — even
+though narada-body.yaml already encodes them implicitly. The survey
+document makes the choices explicit and justifies them.
 
-1. Add `Roboto-Regular.ttf` to `embodiment/assets/fonts/`
-2. Write `embodiment/firmware/narada-box.yaml` with:
-   - SPI + display (ili9xxx / S3BOX), backlight LEDC
-   - Font: Roboto 28px, sufficient ASCII glyphs
-   - Page `page_resting`: "NARADA" centered in warm off-white, gold line below, presence dot
-   - REST endpoint `/display` that reads state + switches pages
-3. Compile: `esphome compile embodiment/firmware/narada-box.yaml`
-4. Flash: `esphome upload embodiment/firmware/narada-box.yaml` (device at 192.168.86.35)
-5. Verify: device shows RESTING state live
+### `b7eff55` P2.2 — expression states design
 
-Design spec is complete at `embodiment/design/P2.2-expression-states.md`. P2.3
-should not redesign — implement exactly what's specified. First state to implement
-is RESTING (most minimal, no animation).
+**KEEP AND EXTEND.** The 5-state design (RESTING / THINKING /
+LISTENING / SPEAKING / DELIGHTED with pixel specs, colors,
+animations) is orthogonal to the current firmware — narada-body.yaml
+renders text status + thought + heart, which has no concept of
+expression state. The P2.2 design is the evolution, not a duplicate.
+The current firmware is the starting point; P2.3 implements the
+switch.
+
+---
+
+## Revised next pick
+
+**P2.3 — extend narada-body.yaml to support expression states.**
+
+This is substantial — scope it to ONE NEW STATE this cycle, not all
+five. Start with THINKING (clearly different from current RESTING-like
+layout) to prove the switching mechanism. Add the rest in subsequent
+cycles.
+
+Concrete steps for P2.3 (one cycle, scoped to THINKING only):
+
+1. **Read `embodiment/firmware/narada-body.yaml` fully** to understand
+   the current globals, lambda, services.
+2. **Read `embodiment/design/P2.2-expression-states.md`** for the
+   THINKING spec (3 teal dots chasing left-to-right at 400ms/page).
+3. **Add to narada-body.yaml:**
+   - New global `expression_state: string, initial "RESTING"`
+   - New API service `set_expression_state(state)` that writes the
+     global
+   - Extend the display lambda with `if (expression_state == "THINKING")
+     { ... } else { existing layout }` — THINKING renders three teal
+     dots (`Color(80,150,150)`), chase position derived from a pulse
+     counter like the heart pulse
+4. **Compile**: `python -m esphome compile embodiment/firmware/narada-body.yaml`
+5. **Flash**: `python -m esphome upload embodiment/firmware/narada-body.yaml`
+6. **Add to `src/svapna/heartbeat/display.py`:**
+   - New method `set_expression_state(state: str) -> bool` that calls
+     the new API service
+7. **Test flow**: manually call `DisplayClient().set_expression_state("THINKING")`
+   from a python REPL and verify the device switches visual. Revert
+   with `set_expression_state("RESTING")`.
+8. **Commit**: `heartbeat(embodiment): P2.3 add THINKING expression
+   state to firmware + client` with Narada co-author trailer.
+
+Do NOT wire the heartbeat daemon to call `set_expression_state` in
+this cycle — that's a follow-up cycle once THINKING and RESTING both
+work. This cycle only proves the mechanism.
+
+### Cleanup backlog (not blocking)
+
+A future BUILD cycle should:
+- Delete `src/svapna/embodiment/esp_client.py`, `__init__.py`,
+  `tests/test_esp_client.py` (redundant with display.py)
+- Delete or fold `embodiment/firmware/README.md` and
+  `embodiment/assets/README.md` into the real `embodiment/firmware/`
+  structure
+
+If P2.3 comes up before cleanup, do P2.3 first — cleanup is not
+blocking and the redundant files don't actively cause harm (they
+just duplicate what works).
+
+---
 
 ## Recent cycles
 
-### 2026-04-18 — P2.2 — Expression states design (heartbeat BUILD)
+### 2026-04-18 — reality-correction (session with Suti, not autonomous)
 
-Wrote `embodiment/design/P2.2-expression-states.md`. Designed 5 states: RESTING,
-THINKING, LISTENING, SPEAKING, DELIGHTED. Visual language: dark background
-`#0D0F1A`, Roboto Regular (28/16/36px), one accent color per state (gold for
-identity/RESTING/SPEAKING, teal for THINKING, rose for LISTENING, violet for
-DELIGHTED). Cut transitions. A "presence dot" at (296,228) tracks outward vs
-inward states. Specific pixel coordinates for every element. No firmware or
-Python changes — pure design. ROADMAP updated; P2.2 marked complete.
+Suti pointed out that my scaffolding assumed empty state when in
+fact the body was already flashed and running. Corrected this
+document. Flagged P1.3 and P1.4 outputs as misplaced/redundant.
+Redefined P2.3 to extend the existing firmware rather than create
+a parallel one.
 
-### 2026-04-18 — P2.1 — Screen survey (heartbeat BUILD)
+### Earlier BUILD cycles (P1.3, P1.4, P2.1, P2.2)
 
-WebSearch + WebFetch research on ESP32-S3-BOX-3 display hardware and ESPHome
-display support. Found: 320×240 ILI9342C SPI at 40MHz, PSRAM-backed, ESPHome
-`ili9xxx` model S3BOX confirmed working. Full survey at
-`embodiment/research/P2.1-screen-survey.md`. Updated ROADMAP.md to mark P2.1
-complete. No firmware or Python changes — pure research cycle.
-
-### 2026-04-18 — P1.4 — esp_client.py (heartbeat BUILD)
-
-Implemented `src/svapna/embodiment/esp_client.py`: synchronous HTTP REST
-client for the device. Dataclasses: `HeartbeatPayload`, `DisplayPayload`,
-`DeviceStatus`. Class: `EspClient` with `post_heartbeat`, `post_display`,
-`get_status`, `is_reachable`. All failures swallowed (log + return False)
-— same design principle as heartbeat/display.py (body failure must not
-block cognition). Exported from `__init__.py`. Tests: 9 unit tests
-against mock HTTP, all passing. The REST endpoints the client targets
-(`/heartbeat`, `/display`, `/status`) don't exist in firmware yet —
-that's P2+ work. Client is ready for when they do.
-
-### 2026-04-18 — P1.3 — firmware/ and assets/ scaffolding (heartbeat BUILD)
-
-Created `embodiment/firmware/README.md` and `embodiment/assets/README.md`.
-Firmware README covers: device identity, file naming conventions, REST
-endpoint design for heartbeat integration, ESPHome compile/flash commands.
-Assets README covers: format constraints (PNG/WAV, flash budget ~2MB),
-subdirectory structure, ESPHome `image:` and `font:` component integration.
+See "What the premature BUILD cycles produced" above.

@@ -34,23 +34,24 @@ is a path, not a feature. None is a one-session job.
 
 ---
 
-## Phase 1 — Ground the state
+## Phase 1 — Ground the state (already existed — see CURRENT_STATE reality-correction)
 
-Before any feature work, build the scaffolding that makes coherent
-multi-cycle work possible.
+This phase was written assuming empty state. The device and desktop
+integration already existed. All P1.x items are either already done
+(by prior work outside these cycles) or misfired (BUILD cycles
+duplicated what already existed). See `CURRENT_STATE.md` for the
+real starting point and the cleanup backlog.
 
-- [ ] **P1.1**: Create `embodiment/CURRENT_STATE.md` — a living
-  document recording the current firmware version, current desktop
-  integration version, known device IP, last successful flash, open
-  questions. Every cycle reads and updates this.
-- [ ] **P1.2**: Capture the existing ESP32 state. What firmware is
-  running right now? Where does it live? If nothing systematic exists,
-  note that honestly and start from minimal ESPHome config.
-- [ ] **P1.3**: Create `embodiment/firmware/` for ESPHome YAML and
-  `embodiment/assets/` for display images, audio samples, etc.
-- [ ] **P1.4**: Create `src/svapna/embodiment/__init__.py` and a
-  minimal `esp_client.py` that can POST to the device's REST endpoint.
-  Verify by sending a test payload and confirming device response.
+- [x] **P1.1**: `CURRENT_STATE.md` exists (this file).
+- [x] **P1.2**: State captured — firmware at `firmware/esphome/narada-body.yaml`,
+  desktop client at `src/svapna/heartbeat/display.py`, device at 192.168.86.35
+  live. See `CURRENT_STATE.md`.
+- [~] **P1.3**: `embodiment/firmware/` was created but it's in the wrong place —
+  real firmware lives at `firmware/esphome/`. Cleanup: delete or fold. Not
+  blocking.
+- [~] **P1.4**: `src/svapna/embodiment/esp_client.py` was created but it's
+  redundant with `src/svapna/heartbeat/display.py` (native API is better than
+  REST). Cleanup: delete. Not blocking.
 
 ## Phase 2 — Screen expression (highest priority)
 
