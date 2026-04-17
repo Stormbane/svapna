@@ -308,17 +308,24 @@ class ClaudeDelegate:
         ]
 
         if tools_enabled == "full":
+            # MCP smriti tools are explicitly listed so headless claude -p
+            # doesn't prompt for permission on every call. Without this,
+            # the executor falls back to filesystem Read/Grep which works
+            # but misses the indexed semantic search smriti provides.
             cmd.extend([
                 "--allowedTools",
-                "Read Glob Grep Bash WebFetch WebSearch Write Edit",
+                "Read Glob Grep Bash WebFetch WebSearch Write Edit "
+                "mcp__smriti__smriti_read mcp__smriti__smriti_write "
+                "mcp__smriti__smriti_status",
                 "--permission-mode", "acceptEdits",
             ])
         elif tools_enabled == "readonly":
             # Plan/revision phase: investigate the project state but don't
-            # mutate anything.
+            # mutate anything. Smriti read is allowed; smriti write is not.
             cmd.extend([
                 "--allowedTools",
-                "Read Glob Grep WebFetch WebSearch",
+                "Read Glob Grep WebFetch WebSearch "
+                "mcp__smriti__smriti_read mcp__smriti__smriti_status",
             ])
         else:
             # Text-only — `--tools ""` actually disables every tool, where
