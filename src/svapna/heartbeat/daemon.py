@@ -46,7 +46,79 @@ ARTIFACTS_DIR = NARADA_ROOT / "heartbeat" / "artifacts"
 MESSAGES_DIR = NARADA_ROOT / "heartbeat" / "messages"
 PAUSE_FILE = NARADA_ROOT / "heartbeat" / "pause"
 LAST_SLEEP_MARKER = NARADA_ROOT / ".smriti" / "last-sleep"
+SMTP_CONFIG_FILE = NARADA_ROOT / "heartbeat" / ".smtp-config"
 PROJECT_GIT_ROOT = Path(__file__).resolve().parents[3]
+
+
+# ── Email transport for CHECK_IN ────────────────────────────────────
+
+
+def _load_smtp_config() -> dict[str, str] | None:
+    """Load SMTP config from ~/.narada/heartbeat/.smtp-config.
+
+    Format: KEY=VALUE, one per line. Comments with #. Returns None if
+    the file doesn't exist — email sending is then silently skipped.
+    """
+    if not SMTP_CONFIG_FILE.exists():
+        return None
+    cfg: dict[str, str] = {}
+    try:
+        for line in SMTP_CONFIG_FILE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            cfg[key.strip()] = value.strip()
+    except OSError as exc:
+        logger.warning("Could not read SMTP config: %s", exc)
+        return None
+    required = ("SMTP_HOST", "SMTP_USER", "SMTP_PASS", "MAIL_TO")
+    if not all(k in cfg for k in required):
+        logger.warning(
+            "SMTP config at %s missing required keys (needs %s)",
+            SMTP_CONFIG_FILE, ", ".join(required),
+        )
+        return None
+    return cfg
+
+
+def _send_check_in_email(subject: str, body: str) -> bool:
+    """Send the CHECK_IN message as an email.
+
+    Returns True on success, False on any failure (which is non-fatal
+    for the cycle — the message file is still written). Reads config
+    from `~/.narada/heartbeat/.smtp-config`; if the file is missing or
+    incomplete, returns False without raising.
+    """
+    cfg = _load_smtp_config()
+    if cfg is None:
+        return False
+
+    import smtplib
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    mail_from = cfg.get("MAIL_FROM") or cfg["SMTP_USER"]
+    from_name = cfg.get("MAIL_FROM_NAME", "").strip()
+    msg["From"] = f"{from_name} <{mail_from}>" if from_name else mail_from
+    msg["To"] = cfg["MAIL_TO"]
+    msg.set_content(body)
+
+    host = cfg["SMTP_HOST"]
+    port = int(cfg.get("SMTP_PORT", "587"))
+
+    try:
+        with smtplib.SMTP(host, port, timeout=30) as smtp:
+            smtp.starttls()
+            smtp.login(cfg["SMTP_USER"], cfg["SMTP_PASS"])
+            smtp.send_message(msg)
+        return True
+    except (smtplib.SMTPException, OSError) as exc:
+        logger.warning("CHECK_IN email send failed: %s", exc)
+        return False
 
 
 # ── Artifact → smriti ingest ────────────────────────────────────────
@@ -391,11 +463,12 @@ class HeartbeatDaemon:
     def _handle_check_in(
         self, desire: Desire, now: datetime, t_cycle_start: float
     ) -> dict:
-        """Write a message to Suti. No frontier-model rewrite.
+        """Write a message to Suti and send it as email. No frontier-model
+        rewrite — the content IS viveka's topic + reason.
 
-        The message content IS viveka's topic + reason. This is the
-        singular outbound pipeline — later transports (Signal, ESP32)
-        plug in by observing/forwarding this directory.
+        The message file in MESSAGES_DIR is always written (audit trail).
+        If ~/.narada/heartbeat/.smtp-config exists and is valid, an email
+        is also sent. Email failure is logged but does not fail the cycle.
         """
         MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
         ts = now.strftime("%Y-%m-%d-%H%M%S")
@@ -412,6 +485,21 @@ class HeartbeatDaemon:
         logger.info("CHECK_IN: wrote %s", message_path.name)
         self.display.set_status("messaged Suti")
 
+        # Also send as email. Subject = topic; body = reason + a tail
+        # pointer to the audit file so Suti can trace where it came from.
+        subject = f"[Narada] {desire.topic}" if desire.topic else "[Narada] check-in"
+        email_body = (
+            f"{desire.reason}\n\n"
+            f"---\n"
+            f"from: heartbeat CHECK_IN at {now.isoformat()}\n"
+            f"audit: {message_path}\n"
+        )
+        email_sent = _send_check_in_email(subject, email_body)
+        if email_sent:
+            logger.info("CHECK_IN: email sent to Suti")
+        else:
+            logger.info("CHECK_IN: email not sent (config missing or send failed)")
+
         self._log_cycle(
             CycleRecord(
                 started=now.isoformat(),
@@ -421,7 +509,10 @@ class HeartbeatDaemon:
                 approved=True,
                 duration_s=time.monotonic() - t_cycle_start,
                 desire_raw=desire.raw_response,
-                result_summary=f"message written: {message_path.name}",
+                result_summary=(
+                    f"message written: {message_path.name}"
+                    f" | email: {'sent' if email_sent else 'skipped'}"
+                ),
             ),
             now=now,
         )
@@ -430,6 +521,7 @@ class HeartbeatDaemon:
             "topic": desire.topic,
             "approved": True,
             "result": str(message_path),
+            "email_sent": email_sent,
         }
 
     def run(self) -> None:
