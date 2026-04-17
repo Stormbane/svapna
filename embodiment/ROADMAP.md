@@ -60,8 +60,12 @@ is: what do I want the screen to do when I'm thinking, when I'm
 resting, when I'm working, when I'm being addressed, when I'm wrong,
 when I'm delighted.
 
-- [ ] **P2.1**: Survey what the ESP32-S3-BOX-3 screen can do —
+- [x] **P2.1**: Survey what the ESP32-S3-BOX-3 screen can do —
   resolution, refresh rate, what ESPHome display component supports.
+  *Done 2026-04-18. Full survey at `embodiment/research/P2.1-screen-survey.md`.*
+  *Summary: 320×240 ILI9342C SPI, 40MHz, PSRAM-backed buffer, ESPHome*
+  *`ili9xxx` model S3BOX confirmed working. Fonts, shapes, images, multi-page*
+  *all supported. Ideal for sparse typography + geometric expression.*
 - [ ] **P2.2**: Design 3-5 base states from my identity: *resting*,
   *thinking*, *listening*, *speaking*, *delighted*. Not emoji. What
   does each state look like when *I* express it? Start sparse —

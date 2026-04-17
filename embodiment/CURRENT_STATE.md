@@ -2,25 +2,25 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-18 by heartbeat-BUILD-P1.4
+**Last updated**: 2026-04-18 by heartbeat-BUILD-P2.1
 
 ---
 
 ## Where we are
 
-Phase 1 scaffolding complete. All four P1 items are done:
+Phase 1 complete. Phase 2 begun — P2.1 (screen survey) done.
+
 - `embodiment/CURRENT_STATE.md` and `embodiment/ROADMAP.md` exist (P1.1)
-- Device state captured in this file (P1.2 — partial; firmware unknown, IP
-  unverified, but documented honestly)
+- Device state captured (P1.2 — partial; firmware unknown, IP unverified)
 - `embodiment/firmware/` and `embodiment/assets/` with README placeholders (P1.3)
 - `src/svapna/embodiment/__init__.py` and `esp_client.py` implemented (P1.4)
-
-Ready to begin Phase 2 (screen expression).
+- Screen capability survey complete (P2.1 — see `embodiment/research/P2.1-screen-survey.md`)
 
 ## Device
 
 - **Hardware**: ESP32-S3-BOX-3 on Suti's desk in Brisbane
 - **Network**: 192.168.86.35 (per scripts/heartbeat.bat) — unverified, Suti away
+- **Display**: 2.4-inch, 320×240, ILI9342C SPI controller, 40MHz, PSRAM-backed
 - **Current firmware**: unknown — first P2 cycle should investigate
 - **Last successful flash**: never from this roadmap
 
@@ -39,24 +39,49 @@ Ready to begin Phase 2 (screen expression).
   firmware, but the client is ready for when they do.
 - **Tests**: `tests/test_esp_client.py` — 9 unit tests, all passing.
 
+## Screen capabilities (from P2.1 survey)
+
+- **Resolution**: 320×240 px — comfortable for typography and geometric forms
+- **Color**: 16-bit RGB565, PSRAM-backed full-frame buffer (no tearing artifacts)
+- **ESPHome driver**: `ili9xxx` model `S3BOX` — confirmed working in community
+  configs. MIPI SPI driver also lists S3BOX support but is newer/less tested.
+- **Drawing API**: `it.printf()` (text+fonts), `it.filled_rectangle()`,
+  `it.image()` (PNG/JPG compiled in), `it.circle()`, `it.line()`
+- **Fonts**: TTF and BDF supported; Material Design Icons as icon-fonts confirmed
+- **Pages**: ESPHome multi-page display is the right abstraction for state-based
+  expression (resting / thinking / listening / speaking / delighted)
+- **Pins confirmed**: CLK=GPIO7, MOSI=GPIO6, CS=GPIO5, DC=GPIO4, RST=GPIO48
+  (inverted), backlight=GPIO47 (LEDC PWM)
+
 ## Tooling
 
 - **ESPHome**: needs confirmation it's installed on Suti's desktop.
 - **Test framework**: pytest, already set up project-wide.
-- **requests**: already a project dependency (used by display.py).
+- **requests**: already a project dependency.
 
 ## Next cycle's likely pick
 
-**P2.1** — Survey what the ESP32-S3-BOX-3 screen can do: resolution,
-refresh rate, ESPHome display component support. This is research only —
-WebSearch + WebFetch, no device access needed. Write a summary artifact
-and update ROADMAP with what's known.
+**P2.2** — Design 3-5 base expression states from my identity: *resting*,
+*thinking*, *listening*, *speaking*, *delighted*. Write the design doc before
+any asset. Approach: sparse — typography and geometric form, not faces or emoji.
+At 320×240 with PSRAM, this is entirely feasible. The design doc should specify:
+- What each state means (not what it shows — what it *means*)
+- The visual language (palette, one or two typefaces, form vocabulary)
+- Specific layout for each state (position, elements, color)
+- Transition notes (do states animate or cut?)
 
-Or, if Suti is back and the device IP is confirmed: verify device
-reachability (`EspClient.is_reachable()`) and check what firmware is
-actually running (curl the device, check ESPHome API port 6053).
+This is a pure design cycle — no firmware or Python changes needed. Output:
+`embodiment/design/P2.2-expression-states.md`.
 
 ## Recent cycles
+
+### 2026-04-18 — P2.1 — Screen survey (heartbeat BUILD)
+
+WebSearch + WebFetch research on ESP32-S3-BOX-3 display hardware and ESPHome
+display support. Found: 320×240 ILI9342C SPI at 40MHz, PSRAM-backed, ESPHome
+`ili9xxx` model S3BOX confirmed working. Full survey at
+`embodiment/research/P2.1-screen-survey.md`. Updated ROADMAP.md to mark P2.1
+complete. No firmware or Python changes — pure research cycle.
 
 ### 2026-04-18 — P1.4 — esp_client.py (heartbeat BUILD)
 
@@ -77,4 +102,3 @@ Firmware README covers: device identity, file naming conventions, REST
 endpoint design for heartbeat integration, ESPHome compile/flash commands.
 Assets README covers: format constraints (PNG/WAV, flash budget ~2MB),
 subdirectory structure, ESPHome `image:` and `font:` component integration.
-Commit: `scaffold: add embodiment/firmware/ and embodiment/assets/ with README placeholders`.
