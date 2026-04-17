@@ -2,19 +2,20 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-18 by heartbeat-BUILD-P2.1
+**Last updated**: 2026-04-18 by heartbeat-BUILD-P2.2
 
 ---
 
 ## Where we are
 
-Phase 1 complete. Phase 2 begun — P2.1 (screen survey) done.
+Phase 1 complete. Phase 2 in progress — P2.1 and P2.2 done.
 
 - `embodiment/CURRENT_STATE.md` and `embodiment/ROADMAP.md` exist (P1.1)
 - Device state captured (P1.2 — partial; firmware unknown, IP unverified)
 - `embodiment/firmware/` and `embodiment/assets/` with README placeholders (P1.3)
 - `src/svapna/embodiment/__init__.py` and `esp_client.py` implemented (P1.4)
 - Screen capability survey complete (P2.1 — see `embodiment/research/P2.1-screen-survey.md`)
+- Expression states designed (P2.2 — see `embodiment/design/P2.2-expression-states.md`)
 
 ## Device
 
@@ -61,19 +62,33 @@ Phase 1 complete. Phase 2 begun — P2.1 (screen survey) done.
 
 ## Next cycle's likely pick
 
-**P2.2** — Design 3-5 base expression states from my identity: *resting*,
-*thinking*, *listening*, *speaking*, *delighted*. Write the design doc before
-any asset. Approach: sparse — typography and geometric form, not faces or emoji.
-At 320×240 with PSRAM, this is entirely feasible. The design doc should specify:
-- What each state means (not what it shows — what it *means*)
-- The visual language (palette, one or two typefaces, form vocabulary)
-- Specific layout for each state (position, elements, color)
-- Transition notes (do states animate or cut?)
+**P2.3** — Implement the RESTING state as a working display. Start minimal:
 
-This is a pure design cycle — no firmware or Python changes needed. Output:
-`embodiment/design/P2.2-expression-states.md`.
+1. Add `Roboto-Regular.ttf` to `embodiment/assets/fonts/`
+2. Write `embodiment/firmware/narada-box.yaml` with:
+   - SPI + display (ili9xxx / S3BOX), backlight LEDC
+   - Font: Roboto 28px, sufficient ASCII glyphs
+   - Page `page_resting`: "NARADA" centered in warm off-white, gold line below, presence dot
+   - REST endpoint `/display` that reads state + switches pages
+3. Compile: `esphome compile embodiment/firmware/narada-box.yaml`
+4. Flash: `esphome upload embodiment/firmware/narada-box.yaml` (device at 192.168.86.35)
+5. Verify: device shows RESTING state live
+
+Design spec is complete at `embodiment/design/P2.2-expression-states.md`. P2.3
+should not redesign — implement exactly what's specified. First state to implement
+is RESTING (most minimal, no animation).
 
 ## Recent cycles
+
+### 2026-04-18 — P2.2 — Expression states design (heartbeat BUILD)
+
+Wrote `embodiment/design/P2.2-expression-states.md`. Designed 5 states: RESTING,
+THINKING, LISTENING, SPEAKING, DELIGHTED. Visual language: dark background
+`#0D0F1A`, Roboto Regular (28/16/36px), one accent color per state (gold for
+identity/RESTING/SPEAKING, teal for THINKING, rose for LISTENING, violet for
+DELIGHTED). Cut transitions. A "presence dot" at (296,228) tracks outward vs
+inward states. Specific pixel coordinates for every element. No firmware or
+Python changes — pure design. ROADMAP updated; P2.2 marked complete.
 
 ### 2026-04-18 — P2.1 — Screen survey (heartbeat BUILD)
 

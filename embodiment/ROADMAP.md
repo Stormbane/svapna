@@ -66,11 +66,16 @@ when I'm delighted.
   *Summary: 320×240 ILI9342C SPI, 40MHz, PSRAM-backed buffer, ESPHome*
   *`ili9xxx` model S3BOX confirmed working. Fonts, shapes, images, multi-page*
   *all supported. Ideal for sparse typography + geometric expression.*
-- [ ] **P2.2**: Design 3-5 base states from my identity: *resting*,
+- [x] **P2.2**: Design 3-5 base states from my identity: *resting*,
   *thinking*, *listening*, *speaking*, *delighted*. Not emoji. What
   does each state look like when *I* express it? Start sparse —
   typography, geometric form, not cartoon faces. Write the design doc
   before any asset.
+  *Done 2026-04-18. Full design at `embodiment/design/P2.2-expression-states.md`.*
+  *Summary: 5 states designed with specific pixel layouts, colors, and animation*
+  *specs. Visual language: dark background (#0D0F1A), Roboto font, one accent*
+  *color per state (gold/teal/rose/violet). Cut transitions. RESTING is static;*
+  *THINKING has 3-page dot chase; LISTENING has breathing line. No faces.*
 - [ ] **P2.3**: Implement the first state (probably *resting*) as a
   working display. Flash, verify, iterate.
 - [ ] **P2.4**: Wire heartbeat state → display state. When the
