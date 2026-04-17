@@ -11,3 +11,10 @@ This module is the boundary for BUILD-mode heartbeat cycles on the
 desktop side: cycles may write here freely but not into the
 surrounding `src/svapna/` namespace.
 """
+
+from .esp_client import (  # noqa: F401
+    DeviceStatus,
+    DisplayPayload,
+    EspClient,
+    HeartbeatPayload,
+)
