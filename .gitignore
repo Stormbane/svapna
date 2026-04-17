@@ -86,3 +86,8 @@ htmlcov/
 
 # Runtime logs
 logs/
+
+# Embodiment: binary firmware artifacts and reference firmware
+embodiment/xiaozhi-esp-box-3/
+embodiment/xiaozhi-esp-box-3.zip
+embodiment/firmware/.esphome/
