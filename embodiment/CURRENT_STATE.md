@@ -2,15 +2,16 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-18 by session-2026-04-18-coder-mode-setup
+**Last updated**: 2026-04-18 by heartbeat-BUILD-P1.3
 
 ---
 
 ## Where we are
 
-Phase 1 not yet started. The scaffolding exists (`embodiment/`,
-`src/svapna/embodiment/`, ROADMAP.md, this file) but no firmware or
-desktop integration code yet.
+Phase 1 scaffolding partially complete. `embodiment/firmware/` and
+`embodiment/assets/` now exist with README placeholders describing
+intent, file naming conventions, format constraints, and ESPHome
+integration patterns. No actual firmware YAML or asset files yet.
 
 ## Device
 
@@ -39,10 +40,18 @@ desktop integration code yet.
 
 ## Next cycle's likely pick
 
-Phase 1.1 or 1.2 — either establish the template of CURRENT_STATE
-update discipline (already done here) or investigate what firmware
-is currently on the device.
+Phase 1.4 or 1.5 — create `src/svapna/embodiment/__init__.py` to
+establish the Python module, or investigate current device firmware
+(`esphome version`, ping 192.168.86.35, query device API if ESPHome
+is already running on it).
 
 ## Recent cycles
 
-(none yet — this is the seed)
+### 2026-04-18 — P1.3 — firmware/ and assets/ scaffolding (heartbeat BUILD)
+
+Created `embodiment/firmware/README.md` and `embodiment/assets/README.md`.
+Firmware README covers: device identity, file naming conventions, REST
+endpoint design for heartbeat integration, ESPHome compile/flash commands.
+Assets README covers: format constraints (PNG/WAV, flash budget ~2MB),
+subdirectory structure, ESPHome `image:` and `font:` component integration.
+Commit: `scaffold: add embodiment/firmware/ and embodiment/assets/ with README placeholders`.
