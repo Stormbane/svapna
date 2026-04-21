@@ -290,6 +290,28 @@ def run_score(
         journal_dir = project_root / "data" / "journals"
         write_journal(journal_entry, journal_dir)
 
+        # Persist scored dream pairs so the prepare step can load them
+        today = date.today().isoformat()
+        scored_path = project_root / "data" / "dreams" / f"scored-dreams-{today}.json"
+        scored_data = [
+            {
+                "dream": dream.to_dict(),
+                "score": {
+                    "overall": score.overall,
+                    "dimensions": {
+                        "coherence": score.dimensions.coherence,
+                        "identity_consistency": score.dimensions.identity_consistency,
+                        "novelty": score.dimensions.novelty,
+                        "non_repetition": score.dimensions.non_repetition,
+                    },
+                    "reasoning": score.reasoning,
+                },
+            }
+            for dream, score in kept
+        ]
+        with open(scored_path, "w", encoding="utf-8") as f:
+            json.dump(scored_data, f, indent=2)
+
         return StepResult(
             step="score",
             status="success",
@@ -300,6 +322,7 @@ def run_score(
                 "scored": len(valid_scores),
                 "passed": len(kept),
                 "failed_scoring": len(dreams) - len(valid_scores),
+                "scored_dreams_file": str(scored_path),
             },
         )
     except Exception as e:
@@ -528,13 +551,45 @@ def _load_todays_dreams(project_root: Path) -> list:
 def _load_scored_dreams(project_root: Path) -> list:
     """Load scored dream pairs for training data preparation.
 
-    Returns a list of (Dream, DreamScore) tuples. Returns empty list
-    if no scored dreams are available.
+    Returns a list of (Dream, DreamScore) tuples.
     """
-    # For now, return empty — the prepare step will still work with
-    # conversation + memory data. Full dream scoring integration
-    # will come when the pipeline runs end-to-end with real data.
-    return []
+    from svapna.dream.generate import Dream, DreamTurn
+    from svapna.dream.score import DreamScore, QualityDimensions
+    from svapna.dream.templates import DreamType
+
+    today = date.today().isoformat()
+    scored_path = project_root / "data" / "dreams" / f"scored-dreams-{today}.json"
+    if not scored_path.exists():
+        return []
+
+    with open(scored_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    pairs: list = []
+    for item in data:
+        d = item["dream"]
+        s = item["score"]
+        turns = [DreamTurn(role=t["role"], text=t["text"]) for t in d["turns"]]
+        dream = Dream(
+            dream_type=DreamType(d["dream_type"]),
+            turns=turns,
+            identity_context=d["identity_context"],
+            timestamp=datetime.fromisoformat(d["timestamp"]),
+        )
+        dims = s["dimensions"]
+        score = DreamScore(
+            overall=float(s["overall"]),
+            dimensions=QualityDimensions(
+                coherence=int(dims["coherence"]),
+                identity_consistency=int(dims["identity_consistency"]),
+                novelty=int(dims["novelty"]),
+                non_repetition=int(dims["non_repetition"]),
+            ),
+            reasoning=s.get("reasoning", ""),
+        )
+        pairs.append((dream, score))
+
+    return pairs
 
 
 # --- Pipeline runner ---
