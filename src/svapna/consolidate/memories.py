@@ -57,43 +57,49 @@ def _split_sections(text: str) -> list[tuple[str, str]]:
     return sections
 
 
-def _parse_journal(text: str, source: str) -> list[MemoryPair]:
-    """Parse journal.md into episodic memory pairs."""
+def _parse_journal_file(text: str) -> list[MemoryPair]:
+    """Parse a single journal entry file (smriti frontmatter format)."""
     pairs = []
-    # Split on ## entries (date headers)
-    entries = re.split(r"\n(?=## \d{4}-\d{2}-\d{2})", text)
 
-    for entry in entries:
-        entry = entry.strip()
-        if not entry.startswith("## "):
-            continue
+    # Extract date from YAML frontmatter
+    date = None
+    content_start = 0
+    if text.startswith("---"):
+        end = text.find("\n---\n", 3)
+        if end != -1:
+            for line in text[3:end].split("\n"):
+                if line.startswith("date:"):
+                    date = line.split(":", 1)[1].strip()
+            content_start = end + 5
 
-        # Extract date and title
-        header_match = re.match(r"## (\d{4}-\d{2}-\d{2}) — (.+)", entry)
-        if not header_match:
-            continue
+    body = text[content_start:].strip()
+    if not body or len(body) < 50:
+        return pairs
 
-        date, title = header_match.group(1), header_match.group(2)
-        body = entry[header_match.end():].strip()
-        if not body or len(body) < 50:
-            continue
+    # Extract title from first # heading
+    title = None
+    lines = body.split("\n")
+    if lines and lines[0].startswith("# "):
+        title = lines[0][2:].strip()
+        body = "\n".join(lines[1:]).strip()
 
-        # Generate multiple question angles for each entry
-        pairs.append(MemoryPair(
-            instruction=f"Tell me about {title.lower()}.",
-            response=body,
-            source_file=source,
-            section=title,
-            category="episodic",
-        ))
-        pairs.append(MemoryPair(
-            instruction=f"What happened on {date}?",
-            response=f"On {date} — {title}.\n\n{body}",
-            source_file=source,
-            section=title,
-            category="episodic",
-        ))
+    if not title or not date or not body or len(body) < 50:
+        return pairs
 
+    pairs.append(MemoryPair(
+        instruction=f"Tell me about {title.lower()}.",
+        response=body,
+        source_file="journal.md",
+        section=title,
+        category="episodic",
+    ))
+    pairs.append(MemoryPair(
+        instruction=f"What happened on {date}?",
+        response=f"On {date} — {title}.\n\n{body}",
+        source_file="journal.md",
+        section=title,
+        category="episodic",
+    ))
     return pairs
 
 
@@ -300,22 +306,32 @@ def convert_memory_files(identity_dir: Path | None = None) -> list[MemoryPair]:
         identity_dir = Path.home() / ".narada"
 
     pairs: list[MemoryPair] = []
-    parsers = {
-        "journal.md": _parse_journal,
-        "mind.md": _parse_mind,
-        "identity.md": _parse_identity,
-        "suti.md": _parse_suti,
-        "open-threads.md": _parse_open_threads,
-    }
 
-    for filename, parser in parsers.items():
-        filepath = identity_dir / filename
+    # Journal: scan directory tree of individual smriti-format files
+    journal_dir = identity_dir / "journal"
+    if journal_dir.is_dir():
+        for filepath in sorted(journal_dir.rglob("*.md")):
+            if filepath.name == "index.md":
+                continue
+            text = filepath.read_text(encoding="utf-8")
+            if text.strip():
+                pairs.extend(_parse_journal_file(text))
+
+    # Flat files — paths updated to match current tree layout
+    flat_parsers: list[tuple[str, str, object]] = [
+        ("mind/mind.md", "mind.md", _parse_mind),
+        ("identity.md", "identity.md", _parse_identity),
+        ("people/suti/suti.md", "suti.md", _parse_suti),
+        ("open-threads/open-threads.md", "open-threads.md", _parse_open_threads),
+    ]
+
+    for rel_path, source_name, parser in flat_parsers:
+        filepath = identity_dir / rel_path
         if not filepath.exists():
             continue
         text = filepath.read_text(encoding="utf-8")
         if not text.strip():
             continue
-        file_pairs = parser(text, filename)
-        pairs.extend(file_pairs)
+        pairs.extend(parser(text, source_name))
 
     return pairs
