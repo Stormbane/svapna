@@ -11,7 +11,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from svapna.dream.generate import Dream, GeneratorConfig, generate_batch
-from svapna.dream.journal import build_journal_entry, write_journal
+from svapna.dream.journal import build_journal_entry, entries_from_journal, write_entries, write_journal
 from svapna.dream.score import DreamScore, DreamScorerConfig, filter_by_quality, score_batch
 
 
@@ -125,6 +125,12 @@ def main() -> None:
         )
         journal_path = write_journal(journal_entry, args.output_dir)
         print(f"Dream journal written to {journal_path}")
+
+        # Write per-dream entry files
+        entries = entries_from_journal(journal_entry)
+        entries_dir = args.output_dir / "entries"
+        entry_paths = write_entries(entries, entries_dir)
+        print(f"  {len(entry_paths)} per-dream entries written to {entries_dir}")
 
     print("\nDone.")
 

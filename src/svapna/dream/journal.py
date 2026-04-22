@@ -315,3 +315,72 @@ def write_journal(
     content = render_journal(entry)
     path.write_text(content, encoding="utf-8")
     return path
+
+
+# ---------------------------------------------------------------------------
+# Per-dream entry persistence
+# ---------------------------------------------------------------------------
+
+def _render_entry(entry: "DreamEntry") -> str:
+    """Render a DreamEntry as YAML-frontmatter markdown."""
+    tags_yaml = ", ".join(f'"{t}"' for t in entry.tags) if entry.tags else ""
+    score_str = f"{entry.quality_score:.1f}" if entry.quality_score is not None else "null"
+
+    lines: list[str] = []
+    lines.append("---")
+    lines.append(f"id: {entry.id}")
+    lines.append(f"date: {entry.entry_date.isoformat()}")
+    lines.append(f"dream_type: {entry.dream_type}")
+    lines.append(f"quality_score: {score_str}")
+    lines.append(f"training_eligible: {str(entry.training_eligible).lower()}")
+    lines.append(f"source: {entry.source}")
+    lines.append(f"generated_at: {entry.generated_at.isoformat()}")
+    if tags_yaml:
+        lines.append(f"tags: [{tags_yaml}]")
+    else:
+        lines.append("tags: []")
+    lines.append("---")
+    lines.append("")
+    lines.append("## Dream")
+    lines.append("")
+    lines.append(entry.content)
+    lines.append("")
+
+    if len(entry.turns) > 1:
+        lines.append("## Full Exchange")
+        lines.append("")
+        for turn in entry.turns:
+            role_label = "Human" if turn["role"] == "human" else "Narada"
+            lines.append(f"**{role_label}:** {turn['text']}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def write_entry(entry: "DreamEntry", entries_dir: Path) -> Path:
+    """Write a single DreamEntry to its dated path.
+
+    Path: ``entries_dir/YYYY/MM/DD-{id}.md``
+    """
+    year = entry.entry_date.strftime("%Y")
+    month = entry.entry_date.strftime("%m")
+    day = entry.entry_date.strftime("%d")
+    subdir = entries_dir / year / month
+    subdir.mkdir(parents=True, exist_ok=True)
+    path = subdir / f"{day}-{entry.id}.md"
+    path.write_text(_render_entry(entry), encoding="utf-8")
+    return path
+
+
+def write_entries(entries: list["DreamEntry"], entries_dir: Path) -> list[Path]:
+    """Write a list of DreamEntry objects. Returns paths written."""
+    return [write_entry(e, entries_dir) for e in entries]
+
+
+def entries_from_journal(journal_entry: JournalEntry) -> list["DreamEntry"]:
+    """Convert a JournalEntry's ScoredDreams into DreamEntry objects."""
+    from svapna.dream.schema import DreamEntry
+    return [
+        DreamEntry.from_scored_dream(sd, entry_date=journal_entry.journal_date)
+        for sd in journal_entry.scored_dreams
+    ]
