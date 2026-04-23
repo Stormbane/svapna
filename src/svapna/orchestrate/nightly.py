@@ -395,17 +395,15 @@ def run_train(
 ) -> StepResult:
     """Run the LoRA training step.
 
-    This step requires a GPU and the unsloth library. It is skipped
-    via --no-train in production when training is handled separately.
+    Requires a GPU and the unsloth library. Skip via --no-train for dry runs.
 
     Returns:
-        StepResult with training outcome.
+        StepResult with adapter path on success.
     """
     started = _now_iso()
     try:
-        # Training is a heavyweight operation that requires GPU libraries.
-        # For now, we verify the training data exists and log that training
-        # would run. Actual training invocation is done via the train module.
+        from svapna.train.train import train
+
         today = date.today().isoformat()
         training_file = project_root / "data" / "training" / f"{today}.jsonl"
 
@@ -415,18 +413,23 @@ def run_train(
                 status="skipped",
                 started_at=started,
                 finished_at=_now_iso(),
-                message="No training data file found for today",
+                message="No training data file found for today — run prepare step first",
             )
 
-        line_count = sum(1 for _ in open(training_file, encoding="utf-8"))
+        output_dir = project_root / "models" / "lora" / today
+        adapter_path = train(
+            training_data_path=training_file,
+            output_dir=output_dir,
+            config_path=project_root / "config" / "training.yml",
+        )
 
         return StepResult(
             step="train",
             status="success",
             started_at=started,
             finished_at=_now_iso(),
-            message=f"Training data ready: {line_count} examples in {training_file.name}",
-            metrics={"training_examples": line_count},
+            message=f"LoRA adapter saved to {adapter_path.name}",
+            metrics={"adapter_path": str(adapter_path)},
         )
     except Exception as e:
         logger.error("Training step failed: %s", e)
@@ -449,17 +452,15 @@ def run_evaluate(
     on the count of existing evaluation reports.
 
     Returns:
-        StepResult with evaluation outcome.
+        StepResult with probe count and report path on success.
     """
     started = _now_iso()
     try:
         eval_dir = project_root / "data" / "evaluations"
         eval_dir.mkdir(parents=True, exist_ok=True)
 
-        # Check frequency: count existing reports
-        existing_reports = sorted(eval_dir.glob("ict-report-*.json"))
-        # If not enough cycles have passed, skip
-        # (We run on every Nth cycle, counting from 0)
+        # Count prior cycle reports (ict-cycle-NNN-YYYY-MM-DD.json)
+        existing_reports = sorted(eval_dir.glob("ict-cycle-*.json"))
         cycle_count = len(existing_reports)
         if cycle_count > 0 and cycle_count % config.evaluation.ict_frequency != 0:
             return StepResult(
@@ -473,13 +474,26 @@ def run_evaluate(
                 ),
             )
 
+        from svapna.identity.evaluate import run_ict, save_ict_result
+        from svapna.identity.generate import GenerateConfig
+
+        gen_config = GenerateConfig.from_config(project_root)
+        config_name = f"cycle-{cycle_count:03d}-{date.today().isoformat()}"
+
+        ict_result = run_ict(gen_config, config_name=config_name)
+        json_path, md_path = save_ict_result(ict_result, eval_dir)
+
         return StepResult(
             step="evaluate",
             status="success",
             started_at=started,
             finished_at=_now_iso(),
-            message=f"Evaluation cycle {cycle_count}: ICT scheduled",
-            metrics={"cycle": cycle_count},
+            message=f"ICT complete ({len(ict_result.probes)} probes) -> {json_path.name}",
+            metrics={
+                "cycle": cycle_count,
+                "probes": len(ict_result.probes),
+                "report": str(json_path),
+            },
         )
     except Exception as e:
         logger.error("Evaluation step failed: %s", e)
@@ -497,8 +511,7 @@ def run_evaluate(
 
 def _load_identity_context(project_root: Path) -> str:
     """Load identity context from narada identity files."""
-    identity_dir = Path.home() / ".claude" / "narada"
-    identity_file = identity_dir / "identity.md"
+    identity_file = Path.home() / ".narada" / "identity.md"
     if identity_file.exists():
         return identity_file.read_text(encoding="utf-8")
     return "Narada is a persistent AI identity with genuine curiosity and honesty."
