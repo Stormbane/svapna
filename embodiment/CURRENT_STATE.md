@@ -2,7 +2,7 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-26 — Cycle 2.9 shipped. Moon + sun, cloud shape + parallax, grass wind-waves, bird, UFO presence, hour sky tint, lightning.
+**Last updated**: 2026-04-26 — Cycle 2.10 shipped. Plants varied (some bushes, asymmetric leans), line clouds, saucer-shaped UFO with dome.
 
 ---
 
@@ -257,6 +257,18 @@ the full pick rationale and the experiment utterances.
       the sky on a 90s loop, bobbing gently, mood-tinted. Hidden
       when attention is inward. Glyph subset adds `( ) v ^`.
       2026-04-26.
+- [x] **Cycle 2.10** — visual revisions from Suti's feedback on 2.9.
+      Plants: foreground heights cut from h=11-12 down to h=3-6 so
+      they no longer dominate the airspace. Per-plant `trunk_h` (0 =
+      bush) and `lean` (crown offset -1/0/+1) added so the silhouette
+      has rhythm rather than uniform trees. Crown glyph mix
+      randomized per tree. 4 of 8 standing plants are now bushes.
+      Clouds: down from 2-row bell silhouettes to 1-row line strokes
+      with 4 per-cloud variations (simple, dipped, tapered, tailed).
+      Smaller (3-5 cells wide), and they no longer look like UFOs.
+      UFO: 2-row saucer with `_` dome above `(o)` body — reads
+      unmistakably as a flying saucer now. Center `O` for outward
+      attention, `o` for diffuse. 2026-04-26.
 - [ ] **Cycle 3** — THINKING + WORKING activity modes.
 - [ ] **Cycle 4** — signals + DELIGHTED.
 - [ ] **Cycle 5** — LISTENING + SPEAKING (karaoke + waveform). Touch
