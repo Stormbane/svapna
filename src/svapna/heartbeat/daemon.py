@@ -24,6 +24,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from svapna.body.expression import ExpressionClient
+from svapna.body.weather import fetch_kallangur_weather
 from svapna.heartbeat.cycle_log import CycleRecord, latest_started, write_cycle
 from svapna.heartbeat.delegate import ClaudeDelegate
 from svapna.heartbeat.display import DisplayClient
@@ -221,14 +223,56 @@ class HeartbeatDaemon:
         *,
         manifest: WakeManifest,
         display: DisplayClient | None = None,
+        expression: ExpressionClient | None = None,
         interval: int = DEFAULT_INTERVAL,
+        weather_interval_s: int = 3600,
     ):
         self.viveka = viveka
         self.delegate = delegate
         self.manifest = manifest
         self.display = display or DisplayClient()
+        self.expression = expression or ExpressionClient()
         self.interval = interval
+        self.weather_interval_s = weather_interval_s
+        # 0.0 = never pulled — first beat after startup always pulls.
+        self._last_weather_pull: float = 0.0
         self._running = False
+
+    def _maybe_pull_weather(self) -> None:
+        """Pull current Kallangur weather and push to body if interval elapsed.
+
+        Fail-soft: any error logged at WARNING and the cycle continues. Weather
+        is non-essential to cognition — missing a pull just means the visual
+        lags reality for a bit.
+
+        Future: this hourly tick is one example of the broader "managed
+        schedule" the heartbeat needs (Suti, 2026-04-25). When that lands,
+        this will become a registered scheduled task rather than a
+        special-cased call here.
+        """
+        now = time.time()
+        if now - self._last_weather_pull < self.weather_interval_s:
+            return
+        try:
+            weather = fetch_kallangur_weather()
+        except Exception as exc:
+            logger.warning("Weather fetch raised: %s: %s", type(exc).__name__, exc)
+            return
+        if weather is None:
+            return  # already logged by fetcher
+        if self.expression.set_weather(weather):
+            self._last_weather_pull = now
+            logger.info(
+                "Weather pushed to body: %.1f°C, %.1f km/h @ %.0f°, "
+                "precip %.2f mm/h, cloud %.0f%%",
+                weather.temperature_c,
+                weather.wind_speed_kmh,
+                weather.wind_direction_deg,
+                weather.precipitation_mm_hr,
+                weather.cloud_cover_pct,
+            )
+        else:
+            logger.warning("Weather push to body failed; will retry next interval.")
 
     def beat_once(self) -> dict:
         """Execute a single heartbeat cycle.
@@ -238,6 +282,11 @@ class HeartbeatDaemon:
         """
         now = datetime.now(timezone.utc)
         logger.info("=== HEARTBEAT %s ===", now.isoformat())
+
+        # Scheduled side-task: refresh body's weather state once per interval.
+        # Runs before pause check so the body stays environmentally accurate
+        # even when cognition is paused.
+        self._maybe_pull_weather()
 
         # Kill switch — if ~/.narada/heartbeat/pause exists, skip cycle
         if PAUSE_FILE.exists():
