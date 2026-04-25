@@ -26,7 +26,10 @@ from svapna.body.layers import (
     Mood,
     Signal,
     SignalKind,
+    TreeSpecies,
+    UFOMode,
     Utterance,
+    Visual,
     Vitality,
     Weather,
 )
@@ -139,6 +142,19 @@ class ExpressionClient:
 
     def clear_signal(self) -> bool:
         return self._run("clear_signal", {})
+
+    def set_tree_species(self, species: TreeSpecies) -> bool:
+        """Switch the body's tree species (pine / oak / mixed)."""
+        return self._run("set_tree_species", {"species": species})
+
+    def set_ufo_mode(self, mode: UFOMode) -> bool:
+        """Switch the UFO render mode (grey-filled / mood-tinted / outline)."""
+        return self._run("set_ufo_mode", {"mode": mode})
+
+    def set_visual(self, visual: Visual) -> bool:
+        """Push both visual preferences in one call."""
+        ok = self.set_tree_species(visual.tree_species)
+        return self.set_ufo_mode(visual.ufo_mode) and ok
 
     def set_weather(self, weather: Weather) -> bool:
         """Push environmental conditions to the body. Drives cloud / wind /

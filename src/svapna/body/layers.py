@@ -103,6 +103,22 @@ class Signal:
         return self.kind != "none"
 
 
+TreeSpecies = Literal["pine", "oak", "mixed"]
+UFOMode     = Literal["grey", "mood", "outline"]
+
+
+@dataclass
+class Visual:
+    """The body's visual preferences — its 'wardrobe.'
+
+    Pure cosmetic state. Cognition picks; firmware decides geometry.
+    Adding a new species or palette is a firmware change + one new
+    enum value here.
+    """
+    tree_species: TreeSpecies = "pine"
+    ufo_mode: UFOMode = "grey"
+
+
 @dataclass
 class Weather:
     """Environmental conditions at the body's physical location (Kallangur, QLD).

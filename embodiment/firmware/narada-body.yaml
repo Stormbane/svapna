@@ -159,6 +159,28 @@ api:
             id(signal_kind)     = std::string("none");
             id(signal_until_ms) = 0;
 
+    # --- v1.0 visual preferences (the "wardrobe") ---
+    # Toggleable visual style. Cognition picks; firmware renders. Adding
+    # a new species or palette becomes one more case in this service.
+    - service: set_tree_species
+      variables:
+        species: string  # "pine" | "oak" | "mixed"
+      then:
+        - lambda: |-
+            if (species == std::string("pine"))       id(visual_tree_species) = 0;
+            else if (species == std::string("oak"))   id(visual_tree_species) = 1;
+            else if (species == std::string("mixed")) id(visual_tree_species) = 2;
+            // unknown values silently ignored — keeps state stable.
+
+    - service: set_ufo_mode
+      variables:
+        mode: string  # "grey" | "mood" | "outline"
+      then:
+        - lambda: |-
+            if (mode == std::string("grey"))         id(visual_ufo_mode) = 0;
+            else if (mode == std::string("mood"))    id(visual_ufo_mode) = 1;
+            else if (mode == std::string("outline")) id(visual_ufo_mode) = 2;
+
     # --- v1.0 weather layer (environmental — pushed from cognition) ---
     # The body lives in Kallangur, QLD. Cognition polls Open-Meteo and
     # pushes current conditions; the lambda renders weather into the
@@ -292,6 +314,14 @@ globals:
   - id: weather_temperature_c
     type: float
     initial_value: '22.0f'
+
+  # --- v1.0 visual preferences (defaults: pine trees, grey filled UFO) ---
+  - id: visual_tree_species
+    type: int
+    initial_value: '0'  # 0=pine, 1=oak, 2=mixed
+  - id: visual_ufo_mode
+    type: int
+    initial_value: '0'  # 0=grey filled, 1=mood-tinted, 2=outline-only
 
 spi:
   clk_pin: 7
@@ -840,24 +870,47 @@ display:
           }
         }
 
-        // Crown: triangular conifer shape — width grows from 1 at top
-        // to cw at bottom. All `*` glyphs, no `o`/`O` mix, so it reads
-        // as a classic ASCII pine tree silhouette rather than a flowery
-        // blob. Asymmetric extents from lean.
+        // Crown shape depends on species:
+        //   pine:  triangular, width grows 1 -> cw, all `*`
+        //   oak:   rounded oval, width bulges in middle, glyph mix
+        //   mixed: alternate per tree index (even=pine, odd=oak)
+        int species = id(visual_tree_species);
+        bool is_oak = (species == 1) || (species == 2 && (t & 1));
         for (int rk = 0; rk < crown_h; rk++) {
           int r = crown_top + rk;
           if (r < 0 || r >= ROWS) continue;
-          int w_here = 1 + (rk * (cw - 1)) /
+          int w_here;
+          if (is_oak) {
+            // Oak: bell-curve width via sine — bulges in middle,
+            // tapers at top and bottom.
+            float frac = (float)(rk + 1) / (float)(crown_h + 1);
+            float sw = sinf(3.14159f * frac);
+            w_here = (int)roundf((float)cw * sw);
+            if (w_here < 1)  w_here = 1;
+            if (w_here > cw) w_here = cw;
+          } else {
+            // Pine: triangle, narrow at top -> wide at base.
+            w_here = 1 + (rk * (cw - 1)) /
                           (crown_h > 1 ? crown_h - 1 : 1);
-          if (w_here < 1)  w_here = 1;
-          if (w_here > cw) w_here = cw;
+            if (w_here < 1)  w_here = 1;
+            if (w_here > cw) w_here = cw;
+          }
           int half_l = w_here / 2;
           int half_r = w_here - 1 - half_l;
           for (int k = -half_l; k <= half_r; k++) {
             int col = base_col + crown_dx + k;
             if (col < 0 || col >= COLS) continue;
+            const char* g;
+            if (is_oak) {
+              // Oak glyph mix: edges `*`, interior `o`, exact center `O`.
+              if (k == -half_l || k == half_r)  g = "*";
+              else if (k == 0 && w_here >= 3)   g = "O";
+              else                              g = "o";
+            } else {
+              g = "*";
+            }
             it.print(col * CELL_W, r * CELL_H,
-                     id(plex_mono_12), tree_color, "*");
+                     id(plex_mono_12), tree_color, g);
           }
         }
       }
@@ -891,35 +944,49 @@ display:
       int line_extra = (int)(breath * 8.0f);
       it.line(120 - line_extra, 148, 200 + line_extra, 148, tint);
 
-      // Presence indicator — flying saucer per Suti's reference. Two-row
-      // shape:        (@)        <- saucer body, @ = the indicator symbol
-      //              <...>       <- base / energy beams
-      // 90-second drift across the sky, gentle vertical bob. Hidden
-      // when attention is inward.
+      // Presence indicator — flying saucer.
+      //   visual_ufo_mode 0 (grey): filled grey body with brighter glyphs
+      //                              on top — reads as a colored-in saucer.
+      //   visual_ufo_mode 1 (mood): mood-tinted glyphs only.
+      //   visual_ufo_mode 2 (outline): tint glyphs only, no fill.
       if (id(attention_mode) != std::string("inward")) {
         float ufo_t = fmodf((float)now_ms, 90000.0f) / 90000.0f;
-        int ufo_cx = (int)(ufo_t * (float)(COLS - 5)) + 3;  // leave room for 5-wide base
+        int ufo_cx = (int)(ufo_t * (float)(COLS - 5)) + 3;
         int ufo_y_top = (int)roundf(sinf((float)now_ms / 2200.0f) + 1.0f);
         int ufo_y_bot = ufo_y_top + 1;
         if (ufo_cx - 2 >= 0 && ufo_cx + 2 < COLS && ufo_y_bot < HORIZON_ROW) {
+          int mode = id(visual_ufo_mode);
+          Color body_fill(0x6A, 0x70, 0x80);     // medium grey
+          Color base_fill(0x40, 0x46, 0x50);     // darker grey base
+          Color glyph_grey(0xC8, 0xD0, 0xD8);    // bright silver glyphs
+          Color glyph_use = (mode == 1) ? tint
+                          : (mode == 2) ? glyph_grey : glyph_grey;
+          // Mode 0 + 2 use grey/silver glyphs; mode 1 uses mood tint.
+          if (mode == 0) {
+            // Filled body rect (3 cells wide) + filled base rect (5 wide).
+            it.filled_rectangle((ufo_cx - 1) * CELL_W, ufo_y_top * CELL_H,
+                                3 * CELL_W, CELL_H, body_fill);
+            it.filled_rectangle((ufo_cx - 2) * CELL_W, ufo_y_bot * CELL_H,
+                                5 * CELL_W, CELL_H, base_fill);
+          }
           // Body row: ( @ )
           it.print((ufo_cx - 1) * CELL_W, ufo_y_top * CELL_H,
-                   id(plex_mono_12), tint, "(");
+                   id(plex_mono_12), glyph_use, "(");
           it.print(ufo_cx       * CELL_W, ufo_y_top * CELL_H,
-                   id(plex_mono_12), tint, "@");
+                   id(plex_mono_12), glyph_use, "@");
           it.print((ufo_cx + 1) * CELL_W, ufo_y_top * CELL_H,
-                   id(plex_mono_12), tint, ")");
+                   id(plex_mono_12), glyph_use, ")");
           // Base row: < . . . >
           it.print((ufo_cx - 2) * CELL_W, ufo_y_bot * CELL_H,
-                   id(plex_mono_12), tint, "<");
+                   id(plex_mono_12), glyph_use, "<");
           it.print((ufo_cx - 1) * CELL_W, ufo_y_bot * CELL_H,
-                   id(plex_mono_12), tint, ".");
+                   id(plex_mono_12), glyph_use, ".");
           it.print(ufo_cx       * CELL_W, ufo_y_bot * CELL_H,
-                   id(plex_mono_12), tint, ".");
+                   id(plex_mono_12), glyph_use, ".");
           it.print((ufo_cx + 1) * CELL_W, ufo_y_bot * CELL_H,
-                   id(plex_mono_12), tint, ".");
+                   id(plex_mono_12), glyph_use, ".");
           it.print((ufo_cx + 2) * CELL_W, ufo_y_bot * CELL_H,
-                   id(plex_mono_12), tint, ">");
+                   id(plex_mono_12), glyph_use, ">");
         }
       }
 
@@ -1128,6 +1195,23 @@ text_sensor:
       char buf[16];
       snprintf(buf, sizeof(buf), "%.1f", id(weather_temperature_c));
       return std::string(buf);
+
+  # --- v1.0 visual preferences proprioception ---
+  - platform: template
+    name: "Visual Tree Species"
+    id: visual_tree_species_sensor
+    update_interval: 5s
+    lambda: |-
+      int v = id(visual_tree_species);
+      return std::string(v == 0 ? "pine" : v == 1 ? "oak" : v == 2 ? "mixed" : "?");
+
+  - platform: template
+    name: "Visual UFO Mode"
+    id: visual_ufo_mode_sensor
+    update_interval: 5s
+    lambda: |-
+      int v = id(visual_ufo_mode);
+      return std::string(v == 0 ? "grey" : v == 1 ? "mood" : v == 2 ? "outline" : "?");
 
 font:
   # Local IBM Plex Mono TTFs (extracted to embodiment/assets/fonts/). Glyph

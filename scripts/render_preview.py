@@ -119,8 +119,10 @@ class State:
     precip: float = 0.0
     cloud_pct: float = 0.0
     weather_code: int = 0
-    now_ms: float = 0.0      # animation time
-    lightning: bool = False  # force lightning flash for preview
+    now_ms: float = 0.0
+    lightning: bool = False
+    tree_species: str = "pine"   # "pine" | "oak" | "mixed"
+    ufo_mode: str = "grey"        # "grey" | "mood" | "outline"
 
 
 def render(state: State) -> Image.Image:
@@ -277,15 +279,29 @@ def render(state: State) -> Image.Image:
                 gi = (r + dx + t + int(now_ms / 4000)) & 1
                 put(base_col + trunk_dx + dx, r, trunk_color, trunk_glyphs[gi])
 
-        # Crown — triangular conifer
+        # Crown shape depends on species.
+        is_oak = (state.tree_species == "oak") or \
+                 (state.tree_species == "mixed" and (t & 1))
         for rk in range(crown_h):
             r = crown_top + rk
-            w_here = 1 + (rk * (cw - 1)) // max(1, crown_h - 1)
-            w_here = _clamp(w_here, 1, cw)
+            if is_oak:
+                frac = (rk + 1) / (crown_h + 1)
+                sw = math.sin(math.pi * frac)
+                w_here = int(round(cw * sw))
+                w_here = _clamp(w_here, 1, cw)
+            else:
+                w_here = 1 + (rk * (cw - 1)) // max(1, crown_h - 1)
+                w_here = _clamp(w_here, 1, cw)
             half_l = w_here // 2
             half_r = w_here - 1 - half_l
             for k in range(-half_l, half_r + 1):
-                put(base_col + crown_dx + k, r, tree_color, "*")
+                if is_oak:
+                    if k == -half_l or k == half_r:    g = "*"
+                    elif k == 0 and w_here >= 3:        g = "O"
+                    else:                                g = "o"
+                else:
+                    g = "*"
+                put(base_col + crown_dx + k, r, tree_color, g)
 
     # Wordmark clear-zone + NARADA + line.
     draw.rectangle((76, 86, 76 + 168, 86 + 74), fill=sky)
@@ -301,21 +317,36 @@ def render(state: State) -> Image.Image:
     line_extra = int(breath * 8)
     draw.line((120 - line_extra, 148, 200 + line_extra, 148), fill=tint)
 
-    # UFO presence indicator.
+    # UFO presence indicator — honors visual_ufo_mode.
     if state.attention_mode != "inward":
         ufo_t = (now_ms % 90000.0) / 90000.0
         ufo_cx = int(ufo_t * (COLS - 5)) + 3
         ufo_y_top = round(math.sin(now_ms / 2200.0) + 1.0)
         ufo_y_bot = ufo_y_top + 1
         if ufo_cx - 2 >= 0 and ufo_cx + 2 < COLS and ufo_y_bot < HORIZON_ROW:
-            put(ufo_cx - 1, ufo_y_top, tint, "(")
-            put(ufo_cx,     ufo_y_top, tint, "@")
-            put(ufo_cx + 1, ufo_y_top, tint, ")")
-            put(ufo_cx - 2, ufo_y_bot, tint, "<")
-            put(ufo_cx - 1, ufo_y_bot, tint, ".")
-            put(ufo_cx,     ufo_y_bot, tint, ".")
-            put(ufo_cx + 1, ufo_y_bot, tint, ".")
-            put(ufo_cx + 2, ufo_y_bot, tint, ">")
+            body_fill = (0x6A, 0x70, 0x80)
+            base_fill = (0x40, 0x46, 0x50)
+            glyph_grey = (0xC8, 0xD0, 0xD8)
+            glyph_use = tint if state.ufo_mode == "mood" else glyph_grey
+            if state.ufo_mode == "grey":
+                draw.rectangle(
+                    ((ufo_cx - 1) * CELL_W, ufo_y_top * CELL_H,
+                     (ufo_cx - 1) * CELL_W + 3 * CELL_W, ufo_y_top * CELL_H + CELL_H),
+                    fill=body_fill,
+                )
+                draw.rectangle(
+                    ((ufo_cx - 2) * CELL_W, ufo_y_bot * CELL_H,
+                     (ufo_cx - 2) * CELL_W + 5 * CELL_W, ufo_y_bot * CELL_H + CELL_H),
+                    fill=base_fill,
+                )
+            put(ufo_cx - 1, ufo_y_top, glyph_use, "(")
+            put(ufo_cx,     ufo_y_top, glyph_use, "@")
+            put(ufo_cx + 1, ufo_y_top, glyph_use, ")")
+            put(ufo_cx - 2, ufo_y_bot, glyph_use, "<")
+            put(ufo_cx - 1, ufo_y_bot, glyph_use, ".")
+            put(ufo_cx,     ufo_y_bot, glyph_use, ".")
+            put(ufo_cx + 1, ufo_y_bot, glyph_use, ".")
+            put(ufo_cx + 2, ufo_y_bot, glyph_use, ">")
 
     return img
 
@@ -372,6 +403,10 @@ def main():
     p.add_argument("--attention", default="diffuse",
                    choices=["diffuse", "outward", "inward"])
     p.add_argument("--lightning", action="store_true")
+    p.add_argument("--tree-species", default="pine",
+                   choices=["pine", "oak", "mixed"])
+    p.add_argument("--ufo-mode", default="grey",
+                   choices=["grey", "mood", "outline"])
     p.add_argument("--anim-ms", type=float, default=None,
                    help="Animation timestamp (default: real time)")
     p.add_argument("--live", action="store_true",
@@ -380,6 +415,8 @@ def main():
 
     if args.live:
         s = _live_state()
+        s.tree_species = args.tree_species
+        s.ufo_mode = args.ufo_mode
     else:
         s = State(
             mood_valence=args.mood_valence,
@@ -391,6 +428,8 @@ def main():
             weather_code=args.code,
             attention_mode=args.attention,
             lightning=args.lightning,
+            tree_species=args.tree_species,
+            ufo_mode=args.ufo_mode,
         )
 
     if args.hour is None:
