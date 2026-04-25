@@ -2,7 +2,7 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-25 — Cycle 2.6 shipped. Body is weather-aware; trees sway with real wind in Kallangur.
+**Last updated**: 2026-04-25 — Cycle 2.7 shipped. Sky/grass color bands, breathing NARADA, weather wired into heartbeat.
 
 ---
 
@@ -208,6 +208,21 @@ the full pick rationale and the experiment utterances.
       Verified end-to-end at 23:21 AEST: real conditions (16.8°C,
       13.9 km/h south, 31% cloud, weather_code 1) pushed and rendered.
       2026-04-25.
+- [x] **Cycle 2.7** — visual revisions from Suti's feedback on 2.6.
+      Background split into two bands: sky (`#0A1018`) above row 11,
+      grass (`#101610`) below, so the horizon is legible from color
+      difference alone. Horizon line stops breathing — single quiet
+      `_` glyph in `#404838`; trees in front naturally occlude
+      segments. The heart pulse moves to NARADA itself: wordmark
+      brightness modulates by `sin(phase) * 25` against base
+      text-bright color, so the wordmark exhales rather than the
+      horizon flashing. Sparse grass blades (`, ' : .`) added in rows
+      13-15 between trees, slow-cycling glyph index makes them
+      ripple. Cloud / rain / trunk / moss colors all retuned for more
+      variation while staying muted. Plus: weather pull folded into
+      the heartbeat daemon — hourly fetch + push from
+      `_maybe_pull_weather()` at the start of each beat. First
+      step toward the managed schedule Suti named. 2026-04-25.
 - [ ] **Cycle 3** — THINKING + WORKING activity modes.
 - [ ] **Cycle 4** — signals + DELIGHTED.
 - [ ] **Cycle 5** — LISTENING + SPEAKING (karaoke + waveform). Touch
