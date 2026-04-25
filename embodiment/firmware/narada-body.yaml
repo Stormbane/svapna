@@ -512,16 +512,25 @@ display:
       }
 
       // ----- render -------------------------------------------------------
-      it.fill(Color(0x0D, 0x0F, 0x1A));
+      // Two-band background: sky on top, grass below the horizon. Subtle
+      // hue difference makes the horizon legible even before the line
+      // is drawn — sky is slightly bluer, grass slightly greener.
+      Color sky_bg(0x0A, 0x10, 0x18);     // deep blue-black
+      Color grass_bg(0x10, 0x16, 0x10);   // deep green-black
+      it.fill(sky_bg);
+      it.filled_rectangle(0, HORIZON_ROW * CELL_H,
+                          320, 240 - HORIZON_ROW * CELL_H,
+                          grass_bg);
 
       Color star_color(0xD4, 0xCC, 0xB8);
       Color sun_color(0xF4, 0xD0, 0x60);
-      Color cloud_clear(0x4A, 0x55, 0x60);
-      Color cloud_rain(0x60, 0x65, 0x70);
-      Color horizon_color(0x8A, 0x84, 0x70);
-      Color rain_color(0x6A, 0x80, 0x90);
-      Color trunk_color(0x55, 0x46, 0x36);  // dim warm brown for trunks
-      Color ground_color(0x4A, 0x4A, 0x40);
+      Color cloud_clear(0x6A, 0x72, 0x80);    // slightly brighter cloud
+      Color cloud_rain(0x46, 0x4C, 0x5A);     // darker storm cloud
+      Color horizon_color(0x40, 0x48, 0x38);  // muted earthy line
+      Color rain_color(0x6A, 0x90, 0xA8);     // cool blue
+      Color trunk_color(0x55, 0x38, 0x20);    // warm brown
+      Color grass_blade(0x46, 0x60, 0x32);    // muted moss green
+      Color ground_color(0x2A, 0x38, 0x20);   // darker green-brown
 
       // Sky: stars (only at night, only if not overcast), then sun.
       if (!is_day && cloud_pct < 50.0f) {
@@ -575,15 +584,34 @@ display:
         it.print(dx * CELL_W, dy * CELL_H, id(plex_mono_12), rain_color, g);
       }
 
-      // Horizon line at row 11 (just above the tree trunks). Heart pulse
-      // picks `=` (peak) vs `-` (baseline) for the whole row, so the horizon
-      // breathes with the body.
-      const char* h_glyph = (pulse_offset > 0) ? "=" : "-";
+      // Horizon line at row 11 — a quiet `_` baseline marking the meeting
+      // of sky and grass. No breathing animation here (the heart pulse
+      // moves to the wordmark below); trees in front naturally occlude
+      // segments of the line, which is the right depth read.
       for (int col = 0; col < COLS; col++) {
-        // Skip horizon under the setting/rising sun for a clean eclipse.
         if (is_day && sun_x == col && sun_y_row >= 5) continue;
         it.print(col * CELL_W, HORIZON_ROW * CELL_H,
-                 id(plex_mono_12), horizon_color, h_glyph);
+                 id(plex_mono_12), horizon_color, "_");
+      }
+
+      // Grass blades — rows 13-15 in tree-free columns. Glyph index cycles
+      // slowly with time so the grass appears to ripple subtly.
+      static const char* GRASS_GLYPHS[] = { ",", "'", ":", "." };
+      for (int col = 0; col < COLS; col++) {
+        bool near_tree = false;
+        for (int t = 0; t < N_TREES; t++) {
+          if (col >= tree_col[t] - 1 && col <= tree_col[t] + 1) {
+            near_tree = true; break;
+          }
+        }
+        if (near_tree) continue;
+        for (int row = 13; row < ROWS; row++) {
+          // Skip ~half the cells for sparse blade texture.
+          if (((col * 7 + row * 11) & 1) == 0) continue;
+          int gi = (col + row * 3 + (int)(now_ms / 1500)) & 3;
+          it.print(col * CELL_W, row * CELL_H,
+                   id(plex_mono_12), grass_blade, GRASS_GLYPHS[gi]);
+        }
       }
 
       // Trees: trunk + crown, swaying with wind. Crown sways more than trunk.
@@ -627,27 +655,32 @@ display:
         }
       }
 
-      // Sparse ground texture in tree-free columns of the bottom row.
-      // Cheap atmospheric detail — `.` and `,` based on column parity.
-      for (int col = 0; col < COLS; col++) {
-        // Skip tree columns and wordmark valley
-        bool near_tree = false;
-        for (int t = 0; t < N_TREES; t++) {
-          if (col >= tree_col[t] - 1 && col <= tree_col[t] + 1) { near_tree = true; break; }
-        }
-        if (near_tree) continue;
-        // sparse — every 3rd column
-        if ((col + (int)(now_ms / 1500)) % 3 != 0) continue;
-        const char* g = (col % 2) ? "." : ",";
-        it.print(col * CELL_W, (ROWS - 1) * CELL_H,
-                 id(plex_mono_12), ground_color, g);
-      }
-
       // ----- clear-zone for wordmark + line ------------------------------
-      it.filled_rectangle(76, 86, 168, 74, Color(0x0D, 0x0F, 0x1A));
-      it.print(160, 112, id(plex_mono_28), Color(0xD4, 0xCC, 0xB8),
+      // Clear-zone uses sky bg (the wordmark sits in the sky band).
+      it.filled_rectangle(76, 86, 168, 74, sky_bg);
+
+      // NARADA wordmark — brightness modulates with the heart pulse.
+      // Smooth sine modulation on the same heart phase used for the field;
+      // the wordmark itself is what breathes now.
+      float pulse_smooth = sinf(phase);            // [-1, 1]
+      int   delta = (int)(pulse_smooth * 25.0f);   // [-25, +25]
+      auto cclamp = [](int v) -> uint8_t {
+        if (v < 0)   return 0;
+        if (v > 255) return 255;
+        return (uint8_t)v;
+      };
+      Color narada_color(
+        cclamp(0xD4 + delta),
+        cclamp(0xCC + delta),
+        cclamp(0xB8 + delta)
+      );
+      it.print(160, 112, id(plex_mono_28), narada_color,
                TextAlign::CENTER, "NARADA");
+
+      // Mood-tinted line under wordmark.
       it.line(120, 148, 200, 148, tint);
+
+      // Presence dot bottom-right (only when attention is not inward).
       if (id(attention_mode) != std::string("inward")) {
         it.filled_circle(296, 228, 4, tint);
       }
