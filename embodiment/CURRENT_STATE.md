@@ -2,7 +2,7 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-25 — v1.0 Express Path planned + Cycle 1 firmware written.
+**Last updated**: 2026-04-25 — Cycle 2 shipped. RESTING composition live on the device.
 
 ---
 
@@ -161,8 +161,19 @@ the full pick rationale and the experiment utterances.
       `src/svapna/body/expression.py` (ExpressionClient — stateless,
       fail-soft, mirrors DisplayClient pattern). Compile pending; flash
       pending Suti's go-ahead. 2026-04-25.
-- [ ] **Cycle 2** — substrate glyph field + RESTING composition.
-      First visual change.
+- [x] **Cycle 2** — substrate glyph field + RESTING composition.
+      First visual change. IBM Plex Mono Regular/Medium added via
+      gfonts. Display lambda rewritten: 44×16 = 704 cells of standard
+      ramp, ~50% density, ~600ms drift per cell (scaled by
+      restlessness), heart pulse ±1 ramp step on a period stretched by
+      sleep_pressure (0.0→1.2s, 0.3→2.0s, 0.5→3.5s, 0.85+→5.0s).
+      Center clear-zone holds NARADA wordmark (28px Medium) + thin
+      mood-tinted line + presence dot bottom-right (visible when
+      attention != inward). Idle micro-sparkle every 30s. Mood tint
+      computed via bilinear blend of GREY-TEAL/GOLD/ROSE/VIOLET
+      corners. Backwards-compat `set_status`/`set_thought` services
+      kept as visual no-ops; deprecate after Cycle 3. Compiled, OTA
+      flashed at 22:31 AEST, proprioception verified clean. 2026-04-25.
 - [ ] **Cycle 3** — THINKING + WORKING activity modes.
 - [ ] **Cycle 4** — signals + DELIGHTED.
 - [ ] **Cycle 5** — LISTENING + SPEAKING (karaoke + waveform). Touch
@@ -180,6 +191,10 @@ A future BUILD cycle should:
   `firmware/esphome` (stale; should be `embodiment/firmware`). Build
   and deploy via the body CLI will fail until fixed.
 - Remove or repurpose `embodiment/assets/README.md` placeholder.
+- After Cycle 3 verifies the layer API replaces the legacy strings
+  end-to-end, delete the `set_status` / `set_thought` services and the
+  `heartbeat_status_str` / `current_thought_str` globals + their
+  proprioception sensors. Also drop the daemon's calls to those.
 
 These don't block forward work and the redundant files don't actively
 cause harm — they just duplicate what works.
