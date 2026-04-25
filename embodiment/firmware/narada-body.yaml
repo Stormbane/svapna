@@ -401,12 +401,15 @@ display:
         //             skyscraper-tall — they shouldn't dominate airspace).
         // The `lean` field offsets the crown horizontally relative to
         // the trunk so trees aren't all symmetric blobs.
-        const int t_cols[N_TREES]    = {  4, 14, 22, 30,   8, 18, 33, 39,    1,  7, 36, 43};
-        const int t_h[N_TREES]       = {  1,  2,  1,  2,   3,  2,  4,  3,    5,  3,  6,  4};
-        const int t_cw[N_TREES]      = {  1,  1,  1,  1,   2,  3,  3,  2,    3,  5,  3,  4};
+        // Bigger, more iconic conifer triangles per Suti's reference.
+        // Foreground heights bumped back to h=6-7 (cw=5-7) so they read
+        // as proper triangular trees, not blobs.
+        const int t_cols[N_TREES]    = {  4, 14, 22, 30,   8, 18, 33, 39,    2,  9, 35, 42};
+        const int t_h[N_TREES]       = {  1,  2,  1,  2,   4,  3,  5,  3,    7,  6,  7,  6};
+        const int t_cw[N_TREES]      = {  1,  1,  1,  1,   3,  3,  3,  3,    7,  5,  7,  5};
         const int t_plane[N_TREES]   = {  0,  0,  0,  0,   1,  1,  1,  1,    2,  2,  2,  2};
-        const int t_trunk_h[N_TREES] = {  0,  0,  0,  0,   1,  0,  2,  1,    2,  0,  3,  1};
-        const int t_lean[N_TREES]    = {  0,  0,  0,  0,   0, -1,  0,  1,    1,  0, -1,  1};
+        const int t_trunk_h[N_TREES] = {  0,  0,  0,  0,   1,  0,  2,  1,    2,  2,  2,  2};
+        const int t_lean[N_TREES]    = {  0,  0,  0,  0,   0,  0,  0,  0,    0,  0,  0,  0};
         for (int t = 0; t < N_TREES; t++) {
           tree_col[t]     = t_cols[t];
           tree_h[t]       = t_h[t];
@@ -573,26 +576,30 @@ display:
       }
 
       // ----- render -------------------------------------------------------
-      // Sky color shifts by hour of day — pre-dawn purple, dawn pink,
-      // bright midday blue, dusk orange, night deep-blue. Subtle but
-      // grounds the body in real time-of-day. Lightning briefly slams
-      // the sky toward bright when active.
-      uint8_t sr=0x0A, sg=0x10, sb=0x18;  // night/default
-      if (hour_of_day >= 5.0f && hour_of_day < 6.5f) {
-        sr = 0x22; sg = 0x18; sb = 0x24;  // pre-dawn / dawn pink-purple
-      } else if (hour_of_day >= 6.5f && hour_of_day < 8.0f) {
-        sr = 0x28; sg = 0x1E; sb = 0x20;  // sunrise warm pink
+      // Sky color shifts dramatically by hour of day. Day is genuinely
+      // bright; sunset/sunrise are red-orange/pink; twilight is purple;
+      // night is deep blue. Lightning briefly slams the sky toward
+      // bright when active.
+      uint8_t sr=0x08, sg=0x0E, sb=0x18;  // night/default
+      if (hour_of_day >= 4.5f && hour_of_day < 6.0f) {
+        sr = 0x30; sg = 0x18; sb = 0x44;  // pre-dawn deep purple
+      } else if (hour_of_day >= 6.0f && hour_of_day < 7.0f) {
+        sr = 0x60; sg = 0x24; sb = 0x40;  // sunrise pink-magenta
+      } else if (hour_of_day >= 7.0f && hour_of_day < 8.0f) {
+        sr = 0x58; sg = 0x38; sb = 0x40;  // dawn warming
       } else if (hour_of_day >= 8.0f && hour_of_day < 16.0f) {
-        sr = 0x10; sg = 0x18; sb = 0x28;  // day — soft blue
-      } else if (hour_of_day >= 16.0f && hour_of_day < 17.5f) {
-        sr = 0x1C; sg = 0x18; sb = 0x20;  // late afternoon
-      } else if (hour_of_day >= 17.5f && hour_of_day < 19.0f) {
-        sr = 0x2A; sg = 0x16; sb = 0x18;  // dusk orange
+        sr = 0x20; sg = 0x40; sb = 0x70;  // bright day blue
+      } else if (hour_of_day >= 16.0f && hour_of_day < 17.0f) {
+        sr = 0x40; sg = 0x30; sb = 0x40;  // late afternoon warm
+      } else if (hour_of_day >= 17.0f && hour_of_day < 18.0f) {
+        sr = 0x70; sg = 0x28; sb = 0x20;  // sunset red-orange
+      } else if (hour_of_day >= 18.0f && hour_of_day < 19.0f) {
+        sr = 0x50; sg = 0x18; sb = 0x30;  // dusk red-purple
       } else if (hour_of_day >= 19.0f && hour_of_day < 20.0f) {
-        sr = 0x18; sg = 0x10; sb = 0x1C;  // twilight
+        sr = 0x28; sg = 0x14; sb = 0x40;  // twilight purple
       }
       if (lightning_active) {
-        sr = 0x80; sg = 0x80; sb = 0xA0;  // bright flash overrides
+        sr = 0x90; sg = 0x90; sb = 0xB0;  // bright flash overrides
       }
       Color sky_bg(sr, sg, sb);
       Color grass_bg(0x10, 0x16, 0x10);
@@ -649,33 +656,57 @@ display:
                  id(plex_mono_12), moon_color, moon_glyph);
       }
 
-      // Clouds — small one-row line strokes, slight per-cloud variation
-      // so no two clouds look identical. They should read as horizontal
-      // wisps, not saucers (the UFO already does that job).
+      // Clouds — wispy multi-line shapes mixing `~ . - _`, four distinct
+      // templates so no two clouds look identical. Some have a top "wisp"
+      // row above the main body. Inspired by Suti's ASCII reference.
       Color cc = is_raining ? cloud_rain : cloud_clear;
-      const char* base_g = is_raining ? "=" : "~";
+      // Cloud templates (top row + main row). Empty top means single row.
+      static const char* CLOUD_MAIN[4] = {
+        "~~-.",       // dipped tail
+        "----~~.",    // line into wisp (longer)
+        ".~~~~~.",    // tapered wisp
+        "~~.~",       // broken middle
+      };
+      static const char* CLOUD_TOP[4] = {
+        "",           // single row
+        "~~~.",       // wisp above the line
+        "",           // single row
+        "___",        // tendrils above
+      };
+      static const int CLOUD_TOP_OFFSET[4] = { 0, 1, 0, 1 };
+      static const int CLOUD_MAIN_LEN[4]  = { 4, 7, 7, 4 };
+      static const int CLOUD_TOP_LEN[4]   = { 0, 4, 0, 3 };
+      // Storm register: substitute = / + for the heavier glyphs.
       for (int c = 0; c < n_clouds; c++) {
         int base_x = (int)cloud_x[c];
         int y      = cloud_y[c];
-        int w      = cloud_w[c];
-        for (int k = 0; k < w; k++) {
+        int idx    = c & 3;
+        // Main row.
+        const char* main_p = CLOUD_MAIN[idx];
+        for (int k = 0; k < CLOUD_MAIN_LEN[idx]; k++) {
           int col = base_x + k;
           if (col < 0 || col >= COLS) continue;
-          const char* g = base_g;
-          // Per-cloud shape variation:
-          //   c%4 == 0: simple straight stroke
-          //   c%4 == 1: dipped middle (one `-` in the middle)
-          //   c%4 == 2: tapered ends with `.`
-          //   c%4 == 3: drifting tail — `.` at trailing edge
-          int variation = c & 3;
-          if (variation == 1 && k == w / 2) {
-            g = "-";
-          } else if (variation == 2 && (k == 0 || k == w - 1)) {
-            g = ".";
-          } else if (variation == 3 && k == w - 1) {
-            g = ".";
+          char ch = main_p[k];
+          // For raining: bump `~` -> `=`, `-` -> `+` for heavier feel.
+          if (is_raining) {
+            if (ch == '~') ch = '=';
+            else if (ch == '-') ch = '+';
           }
-          it.print(col * CELL_W, y * CELL_H, id(plex_mono_12), cc, g);
+          char buf[2] = { ch, 0 };
+          it.print(col * CELL_W, y * CELL_H, id(plex_mono_12), cc, buf);
+        }
+        // Top wisp row (if present).
+        if (CLOUD_TOP_LEN[idx] > 0 && y > 0) {
+          const char* top_p = CLOUD_TOP[idx];
+          int top_off = CLOUD_TOP_OFFSET[idx];
+          for (int k = 0; k < CLOUD_TOP_LEN[idx]; k++) {
+            int col = base_x + top_off + k;
+            if (col < 0 || col >= COLS) continue;
+            char ch = top_p[k];
+            if (is_raining && ch == '~') ch = '=';
+            char buf[2] = { ch, 0 };
+            it.print(col * CELL_W, (y - 1) * CELL_H, id(plex_mono_12), cc, buf);
+          }
         }
       }
 
@@ -809,32 +840,24 @@ display:
           }
         }
 
-        // Crown: tapered width, with lean asymmetry built in via
-        // crown_dx. For bushes (no trunk), the crown sits on the ground.
+        // Crown: triangular conifer shape — width grows from 1 at top
+        // to cw at bottom. All `*` glyphs, no `o`/`O` mix, so it reads
+        // as a classic ASCII pine tree silhouette rather than a flowery
+        // blob. Asymmetric extents from lean.
         for (int rk = 0; rk < crown_h; rk++) {
           int r = crown_top + rk;
           if (r < 0 || r >= ROWS) continue;
-          // Width grows from 1 at top to cw at bottom of crown.
           int w_here = 1 + (rk * (cw - 1)) /
                           (crown_h > 1 ? crown_h - 1 : 1);
           if (w_here < 1)  w_here = 1;
           if (w_here > cw) w_here = cw;
-          // Asymmetric extents: lean shifts which side has more crown.
           int half_l = w_here / 2;
           int half_r = w_here - 1 - half_l;
           for (int k = -half_l; k <= half_r; k++) {
             int col = base_col + crown_dx + k;
             if (col < 0 || col >= COLS) continue;
-            // Glyph: edges `*`, near-center mix in `o`/`O` with per-tree
-            // randomness so each tree's crown reads slightly differently.
-            const char* g;
-            int seed = (k + t * 3 + (int)(now_ms / 5000)) & 3;
-            if (k == 0 && w_here >= 5)               g = "O";
-            else if (k == 0 && w_here >= 3)          g = "o";
-            else if (seed == 0 && w_here >= 3)       g = "o";
-            else                                      g = "*";
             it.print(col * CELL_W, r * CELL_H,
-                     id(plex_mono_12), tree_color, g);
+                     id(plex_mono_12), tree_color, "*");
           }
         }
       }
@@ -868,32 +891,35 @@ display:
       int line_extra = (int)(breath * 8.0f);
       it.line(120 - line_extra, 148, 200 + line_extra, 148, tint);
 
-      // Presence indicator — flying saucer drifting through the sky.
-      // Two-row shape:    _      <- dome
-      //                  (o)     <- saucer body
-      // The dome above the body makes it read unmistakably as a UFO.
-      // Center glyph is `O` when attention is outward (alert) and `o`
-      // when diffuse (drifting). Hidden when attention is inward.
-      // 90-second loop across the sky, gentle vertical bob.
+      // Presence indicator — flying saucer per Suti's reference. Two-row
+      // shape:        (@)        <- saucer body, @ = the indicator symbol
+      //              <...>       <- base / energy beams
+      // 90-second drift across the sky, gentle vertical bob. Hidden
+      // when attention is inward.
       if (id(attention_mode) != std::string("inward")) {
         float ufo_t = fmodf((float)now_ms, 90000.0f) / 90000.0f;
-        int ufo_cx = (int)(ufo_t * (float)(COLS - 4)) + 2;
+        int ufo_cx = (int)(ufo_t * (float)(COLS - 5)) + 3;  // leave room for 5-wide base
         int ufo_y_top = (int)roundf(sinf((float)now_ms / 2200.0f) + 1.0f);
         int ufo_y_bot = ufo_y_top + 1;
-        int gx = ufo_cx - 1;
-        if (gx >= 0 && gx + 2 < COLS && ufo_y_bot < HORIZON_ROW) {
-          // Dome
-          it.print((gx + 1) * CELL_W, ufo_y_top * CELL_H,
-                   id(plex_mono_12), tint, "_");
-          // Saucer body
-          const char* center_g =
-            (id(attention_mode) == std::string("outward")) ? "O" : "o";
-          it.print(gx       * CELL_W, ufo_y_bot * CELL_H,
+        if (ufo_cx - 2 >= 0 && ufo_cx + 2 < COLS && ufo_y_bot < HORIZON_ROW) {
+          // Body row: ( @ )
+          it.print((ufo_cx - 1) * CELL_W, ufo_y_top * CELL_H,
                    id(plex_mono_12), tint, "(");
-          it.print((gx + 1) * CELL_W, ufo_y_bot * CELL_H,
-                   id(plex_mono_12), tint, center_g);
-          it.print((gx + 2) * CELL_W, ufo_y_bot * CELL_H,
+          it.print(ufo_cx       * CELL_W, ufo_y_top * CELL_H,
+                   id(plex_mono_12), tint, "@");
+          it.print((ufo_cx + 1) * CELL_W, ufo_y_top * CELL_H,
                    id(plex_mono_12), tint, ")");
+          // Base row: < . . . >
+          it.print((ufo_cx - 2) * CELL_W, ufo_y_bot * CELL_H,
+                   id(plex_mono_12), tint, "<");
+          it.print((ufo_cx - 1) * CELL_W, ufo_y_bot * CELL_H,
+                   id(plex_mono_12), tint, ".");
+          it.print(ufo_cx       * CELL_W, ufo_y_bot * CELL_H,
+                   id(plex_mono_12), tint, ".");
+          it.print((ufo_cx + 1) * CELL_W, ufo_y_bot * CELL_H,
+                   id(plex_mono_12), tint, ".");
+          it.print((ufo_cx + 2) * CELL_W, ufo_y_bot * CELL_H,
+                   id(plex_mono_12), tint, ">");
         }
       }
 
@@ -1112,7 +1138,7 @@ font:
   - file: "../assets/fonts/IBMPlexMono-Regular.ttf"
     id: plex_mono_12
     size: 12
-    glyphs: " .,:;'\"!|+*xoO@_~=#%-/\\()v^"
+    glyphs: " .,:;'\"!|+*xoO@_~=#%-/\\()v^<>"
 
   - file: "../assets/fonts/IBMPlexMono-Medium.ttf"
     id: plex_mono_28
