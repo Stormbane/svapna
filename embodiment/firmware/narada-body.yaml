@@ -662,42 +662,55 @@ display:
         }
       }
 
-      // Helper: render a celestial body as 3 stacked filled_circles —
-      // outer faint glow + mid glow + sharp body. Both brightness AND
-      // radius pulse on a sine, so the glow visibly breathes. No halo
-      // glyphs — pure pixel rings.
+      // Helper: render a celestial body as 3 stacked filled_circles.
+      // Glow is ADDITIVE on top of sky_bg — outer/mid layers blend
+      // sky_bg + body_col * factor, so the glow always BRIGHTENS the
+      // sky, never darkens it (a previous version multiplied body_col
+      // alone, which read as a dark spot against bright daytime blue).
+      // Both glow brightness AND outer radius pulse — visibly breathes.
       auto render_celestial = [&](int cx, int cy, Color body_col,
                                   float pulse_period_ms, int body_r) {
         if (cx < 0 || cy < 0) return;
         int px = cx * CELL_W + CELL_W / 2;
         int py = cy * CELL_H + CELL_H / 2;
         float pulse = (sinf((float)now_ms / pulse_period_ms) + 1.0f) * 0.5f;
-        // Outer glow: very faint, large radius that breathes ±25%.
-        int outer_r = (int)((float)body_r * (2.6f + pulse * 0.8f));
+        auto add_clamped = [](uint8_t base, float bonus) -> uint8_t {
+          int v = (int)base + (int)bonus;
+          if (v < 0)   v = 0;
+          if (v > 255) v = 255;
+          return (uint8_t)v;
+        };
+        // Outer glow: faint additive lift over sky bg.
+        int   outer_r = (int)((float)body_r * (2.6f + pulse * 0.8f));
+        float outer_k = 0.20f + pulse * 0.15f;
         Color outer(
-          (uint8_t)((float)body_col.r * (0.10f + pulse * 0.10f)),
-          (uint8_t)((float)body_col.g * (0.10f + pulse * 0.10f)),
-          (uint8_t)((float)body_col.b * (0.10f + pulse * 0.10f))
+          add_clamped(sky_bg.r, (float)body_col.r * outer_k),
+          add_clamped(sky_bg.g, (float)body_col.g * outer_k),
+          add_clamped(sky_bg.b, (float)body_col.b * outer_k)
         );
         it.filled_circle(px, py, outer_r, outer);
-        // Mid glow: muted but visible.
-        int mid_r = (int)((float)body_r * (1.6f + pulse * 0.3f));
+        // Mid glow: stronger additive lift.
+        int   mid_r = (int)((float)body_r * (1.6f + pulse * 0.3f));
+        float mid_k = 0.45f + pulse * 0.20f;
         Color mid(
-          (uint8_t)((float)body_col.r * (0.30f + pulse * 0.20f)),
-          (uint8_t)((float)body_col.g * (0.30f + pulse * 0.20f)),
-          (uint8_t)((float)body_col.b * (0.30f + pulse * 0.20f))
+          add_clamped(sky_bg.r, (float)body_col.r * mid_k),
+          add_clamped(sky_bg.g, (float)body_col.g * mid_k),
+          add_clamped(sky_bg.b, (float)body_col.b * mid_k)
         );
         it.filled_circle(px, py, mid_r, mid);
         // Sharp body — full color, fixed size.
         it.filled_circle(px, py, body_r, body_col);
       };
 
-      // Sun (daytime).
+      // Sun (daytime). One row of top padding (min row = 1) so it
+      // never kisses the screen edge. Body radius bumped to 6 for
+      // ~20% larger presence.
       if (is_day && cloud_pct < 75.0f && sun_x >= 0) {
-        render_celestial(sun_x, sun_y_row, sun_color, 1500.0f, 5);
+        if (sun_y_row < 1) sun_y_row = 1;
+        render_celestial(sun_x, sun_y_row, sun_color, 1500.0f, 6);
       }
 
-      // Moon (nighttime). Arcs across the sky over the 12-hour night.
+      // Moon (nighttime). Same top padding + bigger body (radius 5).
       if (!is_day && cloud_pct < 75.0f) {
         float t_night;
         if (hour_of_day >= 18.0f)      t_night = (hour_of_day - 18.0f) / 12.0f;
@@ -705,10 +718,9 @@ display:
         else                            t_night = 0.5f;
         int moon_x = (int)(t_night * (float)(COLS - 1));
         int moon_y = (int)roundf(6.0f - sinf(3.14159f * t_night) * 6.0f);
-        if (moon_y < 0) moon_y = 0;
+        if (moon_y < 1) moon_y = 1;
         if (moon_y > 6) moon_y = 6;
-        // Slower pulse for the moon — calmer than the sun.
-        render_celestial(moon_x, moon_y, moon_color, 2400.0f, 4);
+        render_celestial(moon_x, moon_y, moon_color, 2400.0f, 5);
       }
 
       // Clouds — wispy multi-line shapes mixing `~ . - _`, four distinct

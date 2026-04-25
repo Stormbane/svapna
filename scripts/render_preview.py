@@ -174,24 +174,40 @@ def render(state: State) -> Image.Image:
         px = cx * CELL_W + CELL_W // 2
         py = cy * CELL_H + CELL_H // 2
         pulse = (math.sin(now_ms / pulse_period_ms) + 1.0) * 0.5
-        # Outer glow
+
+        def add_clamp(base, bonus):
+            return int(_clamp(base + bonus, 0, 255))
+
+        # Outer glow — additive on sky_bg.
         outer_r = int(body_r * (2.6 + pulse * 0.8))
-        outer = tuple(int(c * (0.10 + pulse * 0.10)) for c in body_col)
+        outer_k = 0.20 + pulse * 0.15
+        outer = (
+            add_clamp(sky[0], body_col[0] * outer_k),
+            add_clamp(sky[1], body_col[1] * outer_k),
+            add_clamp(sky[2], body_col[2] * outer_k),
+        )
         draw.ellipse((px - outer_r, py - outer_r, px + outer_r, py + outer_r),
                      fill=outer)
-        # Mid glow
+        # Mid glow — stronger additive lift.
         mid_r = int(body_r * (1.6 + pulse * 0.3))
-        mid = tuple(int(c * (0.30 + pulse * 0.20)) for c in body_col)
+        mid_k = 0.45 + pulse * 0.20
+        mid = (
+            add_clamp(sky[0], body_col[0] * mid_k),
+            add_clamp(sky[1], body_col[1] * mid_k),
+            add_clamp(sky[2], body_col[2] * mid_k),
+        )
         draw.ellipse((px - mid_r, py - mid_r, px + mid_r, py + mid_r), fill=mid)
-        # Sharp body
+        # Sharp body — full color.
         draw.ellipse((px - body_r, py - body_r, px + body_r, py + body_r),
                      fill=body_col)
 
-    # Sun.
+    # Sun. Min row 1 (top padding), radius 6 (~20% larger).
     if is_day and state.cloud_pct < 75.0 and sun_x >= 0:
-        render_celestial(sun_x, sun_y, (0xF4, 0xD0, 0x60), 1500.0, 5)
+        if sun_y < 1:
+            sun_y = 1
+        render_celestial(sun_x, sun_y, (0xF4, 0xD0, 0x60), 1500.0, 6)
 
-    # Moon at night (12-hour arc opposite sun).
+    # Moon. Same top padding + bigger body radius 5.
     if (not is_day) and state.cloud_pct < 75.0:
         if state.hour >= 18.0:
             t_night = (state.hour - 18.0) / 12.0
@@ -201,8 +217,8 @@ def render(state: State) -> Image.Image:
             t_night = 0.5
         moon_x = int(t_night * (COLS - 1))
         moon_y = int(round(6.0 - math.sin(math.pi * t_night) * 6.0))
-        moon_y = _clamp(moon_y, 0, 6)
-        render_celestial(moon_x, moon_y, (0xC8, 0xCC, 0xD8), 2400.0, 4)
+        moon_y = _clamp(moon_y, 1, 6)
+        render_celestial(moon_x, moon_y, (0xC8, 0xCC, 0xD8), 2400.0, 5)
 
     # Clouds — wispy multi-line shapes.
     is_raining = state.precip > 0.05
