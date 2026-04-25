@@ -662,10 +662,46 @@ display:
         }
       }
 
+      // Helper: render a celestial body — sun or moon — with a filled
+      // circle for the body weight and a halo of `.` glyphs in 8
+      // surrounding cells whose brightness pulses on a slow sine.
+      // Reads as a glowing disc, not a single character.
+      auto render_celestial = [&](int cx, int cy, Color body_col,
+                                  const char* glyph, float pulse_period_ms,
+                                  int radius) {
+        if (cx < 0 || cy < 0) return;
+        float glow_t = (sinf((float)now_ms / pulse_period_ms) + 1.0f) * 0.5f;
+        // Halo color: faded toward body_col, brightness pulses 0.3..0.8.
+        float k = 0.3f + glow_t * 0.5f;
+        Color halo(
+          (uint8_t)((float)body_col.r * k),
+          (uint8_t)((float)body_col.g * k),
+          (uint8_t)((float)body_col.b * k)
+        );
+        // Filled body circle — extends slightly beyond the cell.
+        it.filled_circle(cx * CELL_W + CELL_W/2,
+                         cy * CELL_H + CELL_H/2,
+                         radius, halo);
+        // Halo dots in 8 surrounding cells.
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            int gx = cx + dx;
+            int gy = cy + dy;
+            if (gx < 0 || gx >= COLS) continue;
+            if (gy < 0 || gy >= HORIZON_ROW) continue;
+            it.print(gx * CELL_W, gy * CELL_H,
+                     id(plex_mono_12), halo, ".");
+          }
+        }
+        // Body glyph on top.
+        it.print(cx * CELL_W, cy * CELL_H,
+                 id(plex_mono_12), body_col, glyph);
+      };
+
       // Sun (daytime).
       if (is_day && cloud_pct < 75.0f && sun_x >= 0) {
-        it.print(sun_x * CELL_W, sun_y_row * CELL_H,
-                 id(plex_mono_12), sun_color, sun_glyph);
+        render_celestial(sun_x, sun_y_row, sun_color, sun_glyph, 1500.0f, 6);
       }
 
       // Moon (nighttime). Arcs across the sky over the 12-hour night.
@@ -678,12 +714,9 @@ display:
         int moon_y = (int)roundf(6.0f - sinf(3.14159f * t_night) * 6.0f);
         if (moon_y < 0) moon_y = 0;
         if (moon_y > 6) moon_y = 6;
-        const char* moon_glyph;
-        if (moon_y >= 5)      moon_glyph = "O";  // moonrise/moonset glow
-        else if (moon_y >= 3) moon_glyph = "O";
-        else                  moon_glyph = "o";  // small high moon
-        it.print(moon_x * CELL_W, moon_y * CELL_H,
-                 id(plex_mono_12), moon_color, moon_glyph);
+        const char* moon_glyph = (moon_y >= 3) ? "O" : "o";
+        // Slower pulse for the moon — calmer than the sun.
+        render_celestial(moon_x, moon_y, moon_color, moon_glyph, 2400.0f, 5);
       }
 
       // Clouds — wispy multi-line shapes mixing `~ . - _`, four distinct
@@ -915,9 +948,12 @@ display:
         }
       }
 
-      // ----- clear-zone for wordmark + line ------------------------------
-      // Clear-zone uses sky bg (the wordmark sits in the sky band).
-      it.filled_rectangle(76, 86, 168, 74, sky_bg);
+      // ----- clear-zones — TIGHT, only behind the actual wordmark + line.
+      // Two small rectangles instead of one big one. Trees swaying near
+      // center keep their crowns; only the cells directly behind the
+      // text glyphs and the mood line get overdrawn.
+      it.filled_rectangle(110,  98, 100, 30, sky_bg);  // wordmark band
+      it.filled_rectangle(118, 145,  84,  8, sky_bg);  // line band
 
       // NARADA wordmark breath — independent from heart period; uses a
       // dedicated 4-second breath cycle (real respiration is slower than
@@ -963,11 +999,16 @@ display:
                           : (mode == 2) ? glyph_grey : glyph_grey;
           // Mode 0 + 2 use grey/silver glyphs; mode 1 uses mood tint.
           if (mode == 0) {
-            // Filled body rect (3 cells wide) + filled base rect (5 wide).
-            it.filled_rectangle((ufo_cx - 1) * CELL_W, ufo_y_top * CELL_H,
-                                3 * CELL_W, CELL_H, body_fill);
-            it.filled_rectangle((ufo_cx - 2) * CELL_W, ufo_y_bot * CELL_H,
-                                5 * CELL_W, CELL_H, base_fill);
+            // Saucer body: filled circle for a rounded dome shape (less
+            // blocky than a full-cell rectangle).
+            int body_cx = ufo_cx * CELL_W + CELL_W / 2;
+            int body_cy = ufo_y_top * CELL_H + CELL_H / 2;
+            it.filled_circle(body_cx, body_cy, 9, body_fill);
+            // Rim: thin horizontal stripe under the body — saucer's disc
+            // edge. ~3px tall, 5 cells wide, vertically centered in row.
+            int rim_y = ufo_y_bot * CELL_H + CELL_H / 2 - 1;
+            it.filled_rectangle((ufo_cx - 2) * CELL_W, rim_y,
+                                5 * CELL_W, 3, base_fill);
           }
           // Body row: ( @ )
           it.print((ufo_cx - 1) * CELL_W, ufo_y_top * CELL_H,

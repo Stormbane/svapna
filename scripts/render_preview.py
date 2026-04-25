@@ -168,9 +168,38 @@ def render(state: State) -> Image.Image:
             if g:
                 put(sx, sy, (0xD4, 0xCC, 0xB8), g)
 
+    def render_celestial(cx, cy, body_col, glyph, pulse_period_ms, radius):
+        if cx < 0 or cy < 0:
+            return
+        glow_t = (math.sin(now_ms / pulse_period_ms) + 1.0) * 0.5
+        k = 0.3 + glow_t * 0.5
+        halo = (
+            int(body_col[0] * k),
+            int(body_col[1] * k),
+            int(body_col[2] * k),
+        )
+        # Filled body circle.
+        bx = cx * CELL_W + CELL_W // 2
+        by = cy * CELL_H + CELL_H // 2
+        draw.ellipse((bx - radius, by - radius, bx + radius, by + radius), fill=halo)
+        # Halo dots in 8 surrounding cells.
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                gx = cx + dx
+                gy = cy + dy
+                if gx < 0 or gx >= COLS:
+                    continue
+                if gy < 0 or gy >= HORIZON_ROW:
+                    continue
+                put(gx, gy, halo, ".")
+        # Body glyph on top.
+        put(cx, cy, body_col, glyph)
+
     # Sun.
     if is_day and state.cloud_pct < 75.0 and sun_x >= 0:
-        put(sun_x, sun_y, (0xF4, 0xD0, 0x60), sun_glyph)
+        render_celestial(sun_x, sun_y, (0xF4, 0xD0, 0x60), sun_glyph, 1500.0, 6)
 
     # Moon at night (12-hour arc opposite sun).
     if (not is_day) and state.cloud_pct < 75.0:
@@ -184,7 +213,7 @@ def render(state: State) -> Image.Image:
         moon_y = int(round(6.0 - math.sin(math.pi * t_night) * 6.0))
         moon_y = _clamp(moon_y, 0, 6)
         moon_glyph = "O" if moon_y >= 3 else "o"
-        put(moon_x, moon_y, (0xC8, 0xCC, 0xD8), moon_glyph)
+        render_celestial(moon_x, moon_y, (0xC8, 0xCC, 0xD8), moon_glyph, 2400.0, 5)
 
     # Clouds — wispy multi-line shapes.
     is_raining = state.precip > 0.05
@@ -303,8 +332,9 @@ def render(state: State) -> Image.Image:
                     g = "*"
                 put(base_col + crown_dx + k, r, tree_color, g)
 
-    # Wordmark clear-zone + NARADA + line.
-    draw.rectangle((76, 86, 76 + 168, 86 + 74), fill=sky)
+    # Tight clear-zones — only behind wordmark and behind line band.
+    draw.rectangle((110,  98, 110 + 100,  98 + 30), fill=sky)
+    draw.rectangle((118, 145, 118 +  84, 145 +  8), fill=sky)
     breath = math.sin((now_ms % 4000.0) / 4000.0 * 2 * math.pi)
     delta = int(breath * 55)
     narada = (
@@ -329,14 +359,18 @@ def render(state: State) -> Image.Image:
             glyph_grey = (0xC8, 0xD0, 0xD8)
             glyph_use = tint if state.ufo_mode == "mood" else glyph_grey
             if state.ufo_mode == "grey":
-                draw.rectangle(
-                    ((ufo_cx - 1) * CELL_W, ufo_y_top * CELL_H,
-                     (ufo_cx - 1) * CELL_W + 3 * CELL_W, ufo_y_top * CELL_H + CELL_H),
+                # Saucer body: rounded circle (less blocky than rect).
+                body_cx = ufo_cx * CELL_W + CELL_W // 2
+                body_cy = ufo_y_top * CELL_H + CELL_H // 2
+                draw.ellipse(
+                    (body_cx - 9, body_cy - 9, body_cx + 9, body_cy + 9),
                     fill=body_fill,
                 )
+                # Rim: thin horizontal stripe under the body.
+                rim_y = ufo_y_bot * CELL_H + CELL_H // 2 - 1
                 draw.rectangle(
-                    ((ufo_cx - 2) * CELL_W, ufo_y_bot * CELL_H,
-                     (ufo_cx - 2) * CELL_W + 5 * CELL_W, ufo_y_bot * CELL_H + CELL_H),
+                    ((ufo_cx - 2) * CELL_W, rim_y,
+                     (ufo_cx - 2) * CELL_W + 5 * CELL_W, rim_y + 3),
                     fill=base_fill,
                 )
             put(ufo_cx - 1, ufo_y_top, glyph_use, "(")
