@@ -2,7 +2,7 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-25 — Cycle 2.8 shipped. Three tree depth planes, density-gradient horizon, visible 4s wordmark breath.
+**Last updated**: 2026-04-26 — Cycle 2.9 shipped. Moon + sun, cloud shape + parallax, grass wind-waves, bird, UFO presence, hour sky tint, lightning.
 
 ---
 
@@ -236,6 +236,27 @@ the full pick rationale and the experiment utterances.
       mood line under it pulsing ±8px in length on the same phase.
       ASCII-art techniques: atmospheric perspective via blend-toward-bg,
       density gradient for implicit depth lines. 2026-04-25.
+- [x] **Cycle 2.9** — every "open option" from 2.8 shipped at once
+      after Suti's "do all of those" go-ahead.
+      Sky: hour-driven background tint (pre-dawn purple, dawn pink,
+      day blue, dusk orange, night). Moon arcs across night sky on
+      12-hour parabola (`O` low, `o` high). Bird traversal every 3-8
+      min with `v`/`^` wing flap. Lightning flash for weather_code
+      95-99: 90ms sky brighten every 5-13s when storming.
+      Clouds: 2-row bell silhouettes with `.` tapered edges; parallax
+      drift (higher in sky = faster).
+      Grass: wave_pos travels at `1.5 + wind_east * wind/6` cells/sec,
+      each cell's glyph from `' , : .` selected by sin phase; per-row
+      phase offset adds depth. Reads as wind-waves rippling.
+      Trees: plane 0 redesigned as 1-2 glyph silhouettes ON the
+      horizon row (distant trees, no trunk, no sway). Plane 2
+      foreground made TALL (h=11-12, cw=5-7) with crowns up at row 4
+      and trunks running to row 15 — the tree feels like it continues
+      below the screen.
+      Presence dot replaced with a UFO `(o)` / `(O)` drifting through
+      the sky on a 90s loop, bobbing gently, mood-tinted. Hidden
+      when attention is inward. Glyph subset adds `( ) v ^`.
+      2026-04-26.
 - [ ] **Cycle 3** — THINKING + WORKING activity modes.
 - [ ] **Cycle 4** — signals + DELIGHTED.
 - [ ] **Cycle 5** — LISTENING + SPEAKING (karaoke + waveform). Touch
