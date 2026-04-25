@@ -159,6 +159,36 @@ api:
             id(signal_kind)     = std::string("none");
             id(signal_until_ms) = 0;
 
+    # --- v1.0 weather layer (environmental — pushed from cognition) ---
+    # The body lives in Kallangur, QLD. Cognition polls Open-Meteo and
+    # pushes current conditions; the lambda renders weather into the
+    # horizon engine (cloud cover, wind sway on trees, rain streaks).
+    - service: set_weather
+      variables:
+        wind_kmh: float
+        wind_dir: float
+        precip: float
+        cloud_pct: float
+        wcode: int
+        temp_c: float
+      then:
+        - lambda: |-
+            id(weather_wind_speed_kmh) = wind_kmh < 0.0f
+              ? 0.0f
+              : (wind_kmh > 200.0f ? 200.0f : wind_kmh);
+            float wd = wind_dir;
+            while (wd < 0.0f)    wd += 360.0f;
+            while (wd >= 360.0f) wd -= 360.0f;
+            id(weather_wind_direction_deg) = wd;
+            id(weather_precipitation_mm_hr) = precip < 0.0f
+              ? 0.0f
+              : (precip > 100.0f ? 100.0f : precip);
+            id(weather_cloud_cover_pct) = cloud_pct < 0.0f
+              ? 0.0f
+              : (cloud_pct > 100.0f ? 100.0f : cloud_pct);
+            id(weather_code) = wcode;
+            id(weather_temperature_c) = temp_c;
+
 time:
   - platform: sntp
     id: sntp_time
@@ -243,6 +273,26 @@ globals:
     type: uint32_t
     initial_value: '0'
 
+  # --- v1.0 weather (defaults: calm and dry) ---
+  - id: weather_wind_speed_kmh
+    type: float
+    initial_value: '0.0f'
+  - id: weather_wind_direction_deg
+    type: float
+    initial_value: '0.0f'
+  - id: weather_precipitation_mm_hr
+    type: float
+    initial_value: '0.0f'
+  - id: weather_cloud_cover_pct
+    type: float
+    initial_value: '0.0f'
+  - id: weather_code
+    type: int
+    initial_value: '0'
+  - id: weather_temperature_c
+    type: float
+    initial_value: '22.0f'
+
 spi:
   clk_pin: 7
   mosi_pin: 6
@@ -272,31 +322,41 @@ display:
     update_interval: 100ms
     lambda: |-
       // ===================================================================
-      // CYCLE 2.5 — v1.0 RESTING composition with `horizon` substrate engine.
-      // 3-band landscape: sky (stars + sun + clouds), horizon line (heart-
-      // pulse breath), foreground mountain silhouette (mood-tinted accent).
-      // NARADA wordmark + line + presence dot ride above the substrate.
-      //
-      // Sun position by Brisbane local time. Stars visible at night.
-      // Cloud drift speed inversely scaled by sleep_pressure.
-      // See embodiment/design/v1.0-substrate-engines.md §horizon.
+      // CYCLE 2.6 — `horizon` engine, weather-aware. ASCII-only vocabulary.
+      // The body lives in Kallangur, QLD. Cognition pushes Open-Meteo data
+      // via set_weather; the lambda renders trees swaying with real wind,
+      // clouds scaled by overcast %, rain falling when precipitation > 0,
+      // sun position by Brisbane local time. Stars at night when not too
+      // overcast.  See embodiment/design/v1.0-substrate-engines.md §horizon.
       // ===================================================================
 
       static const int COLS = 44;
       static const int ROWS = 16;
       static const int CELL_W = 7;
       static const int CELL_H = 14;
-      static const int HORIZON_ROW = 7;
+      static const int HORIZON_ROW = 11;
       static const int N_STARS = 25;
+      static const int N_TREES = 8;
+      static const int MAX_CLOUDS = 4;
+      static const int MAX_DROPS = 60;
 
       static int     star_x[N_STARS];
-      static int     star_y[N_STARS];     // rows 0..5
-      static float   star_phase[N_STARS]; // [0, 2pi)
-      static int     peaks[44];           // mountain peak row per column
-      static float   cloud_x[2];          // current x position (float, can be negative)
-      static const int cloud_y[2] = {2, 4};
-      static const int cloud_w[2] = {5, 4};
-      static uint32_t last_cloud_ms = 0;
+      static int     star_y[N_STARS];     // rows 0..6
+      static float   star_phase[N_STARS];
+
+      static int     tree_col[N_TREES];   // base column
+      static int     tree_h[N_TREES];     // total height (cells)
+      static int     tree_crown_w[N_TREES];
+      static float   tree_phase[N_TREES];
+
+      static float   cloud_x[MAX_CLOUDS];
+      static const int cloud_y[MAX_CLOUDS] = {2, 4, 3, 5};
+      static const int cloud_w[MAX_CLOUDS] = {5, 4, 6, 4};
+
+      static float   drop_x[MAX_DROPS];
+      static float   drop_y[MAX_DROPS];
+
+      static uint32_t last_anim_ms = 0;
       static uint32_t heart_origin_ms = 0;
       static bool     initialized = false;
 
@@ -304,35 +364,37 @@ display:
 
       if (!initialized) {
         uint32_t s = 0xa11ce5u;
-        // Stars at xorshift-seeded positions in sky band, with random phases.
+        // Stars in sky band rows 0-6, xorshift positions, random phases.
         for (int i = 0; i < N_STARS; i++) {
           s ^= s << 13; s ^= s >> 17; s ^= s << 5;
           star_x[i] = (int)(s % COLS);
           s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-          star_y[i] = (int)(s % 6);
+          star_y[i] = (int)(s % 7);
           s ^= s << 13; s ^= s >> 17; s ^= s << 5;
           star_phase[i] = (float)(s % 1000) / 1000.0f * 6.2831853f;
         }
-        // Mountain peak profile from layered sines — gives 3-4 rolling peaks.
-        // Force a valley around the center cols so the wordmark sits cleanly.
-        for (int col = 0; col < COLS; col++) {
-          float a = sinf((float)col * 0.18f) * 2.5f;
-          float b = sinf((float)col * 0.41f + 1.7f) * 1.8f;
-          float c = sinf((float)col * 0.07f) * 1.3f;
-          int h = 11 + (int)roundf(a + b + c);
-          if (h < 8)  h = 8;
-          if (h > 15) h = 15;
-          // Wordmark valley: cols 14..30 pushed to deep rows so NARADA is
-          // framed by mountains on either side, not punched through them.
-          if (col >= 14 && col <= 30) {
-            int valley_floor = 14;
-            if (h < valley_floor) h = valley_floor;
-          }
-          peaks[col] = h;
+        // Trees flank the wordmark valley (skipping cols 14..30). Heights and
+        // crown widths alternate so the silhouette has rhythm.
+        const int t_cols[N_TREES]  = { 1,  4,  8, 12, 32, 36, 39, 42};
+        const int t_h[N_TREES]     = { 5,  8,  6,  4,  5,  8,  5,  6};
+        const int t_cw[N_TREES]    = { 3,  5,  3,  3,  3,  5,  3,  3};
+        for (int t = 0; t < N_TREES; t++) {
+          tree_col[t]     = t_cols[t];
+          tree_h[t]       = t_h[t];
+          tree_crown_w[t] = t_cw[t];
+          s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+          tree_phase[t] = (float)(s % 1000) / 1000.0f * 6.2831853f;
         }
-        cloud_x[0] = 5.0f;
-        cloud_x[1] = 25.0f;
-        last_cloud_ms = now_ms;
+        // Cloud starting positions spread across the sky band.
+        for (int c = 0; c < MAX_CLOUDS; c++) {
+          cloud_x[c] = (float)(c * 12);
+        }
+        // Rain drops parked offscreen; activated only when precip > 0.
+        for (int d = 0; d < MAX_DROPS; d++) {
+          drop_x[d] = -1.0f;
+          drop_y[d] = -1.0f;
+        }
+        last_anim_ms    = now_ms;
         heart_origin_ms = now_ms;
         initialized = true;
       }
@@ -372,57 +434,102 @@ display:
       );
 
       // ----- Brisbane local time -> sun position --------------------------
-      float hour_of_day = 12.0f;  // safe boot default
+      float hour_of_day = 12.0f;
       auto t_now = id(sntp_time).now();
       if (t_now.is_valid()) {
         hour_of_day = (float)t_now.hour + (float)t_now.minute / 60.0f;
       }
-      // Day spans 06:00..18:00. Outside that = night.
       float t_day = (hour_of_day - 6.0f) / 12.0f;
       bool is_day = (t_day >= 0.0f && t_day <= 1.0f);
       int sun_x = -1, sun_y_row = -1;
       const char* sun_glyph = "o";
       if (is_day) {
         sun_x = (int)(t_day * (float)(COLS - 1));
-        // Parabolic arc — peak (lowest row) at noon.
         sun_y_row = (int)roundf(6.0f - sinf(3.14159f * t_day) * 6.0f);
         if (sun_y_row < 0) sun_y_row = 0;
         if (sun_y_row > 6) sun_y_row = 6;
-        // Glyph by altitude: high = small ring (o), mid = larger (O),
-        // low/horizon = densest (@) for a setting-sun glow.
         if (sun_y_row >= 5)      sun_glyph = "@";
         else if (sun_y_row >= 3) sun_glyph = "O";
         else                     sun_glyph = "o";
       }
 
-      // ----- cloud drift: speed inversely scales with sleep_pressure ------
-      float dt_s = (float)(now_ms - last_cloud_ms) / 1000.0f;
-      last_cloud_ms = now_ms;
-      // Alert (sp=0): ~1 cell/s. Drowsy (sp=1): ~0.17 cell/s.
-      float cloud_speed = 1.0f / (sp * 5.0f + 1.0f);
-      for (int c = 0; c < 2; c++) {
+      // ----- weather reads ------------------------------------------------
+      float wind_kmh    = id(weather_wind_speed_kmh);
+      float wind_dir    = id(weather_wind_direction_deg);
+      float precip_mmhr = id(weather_precipitation_mm_hr);
+      float cloud_pct   = id(weather_cloud_cover_pct);
+      bool  is_raining  = (precip_mmhr > 0.05f);
+      bool  is_overcast = (cloud_pct >= 75.0f);
+      // Wind sign: positive ~ blowing toward the east. Map dir 0=N, 90=E, 180=S, 270=W.
+      // Easterly component = sin(dir_rad). +1 = east wind, -1 = west wind.
+      float wind_east = sinf(wind_dir * 3.14159f / 180.0f);
+      // Sway amplitude in cells: 0 calm -> ~3 cells at 75 km/h.
+      float sway_amp  = wind_kmh / 25.0f;
+      if (sway_amp > 3.0f) sway_amp = 3.0f;
+
+      // Cloud count from cloud cover %.
+      int n_clouds = (int)roundf(cloud_pct / 25.0f);
+      if (n_clouds < 0) n_clouds = 0;
+      if (n_clouds > MAX_CLOUDS) n_clouds = MAX_CLOUDS;
+
+      // Rain drop count from precipitation rate.
+      int n_drops = (int)roundf(precip_mmhr * 8.0f);
+      if (n_drops < 0) n_drops = 0;
+      if (n_drops > MAX_DROPS) n_drops = MAX_DROPS;
+
+      // ----- animation tick ----------------------------------------------
+      float dt_s = (float)(now_ms - last_anim_ms) / 1000.0f;
+      last_anim_ms = now_ms;
+
+      // Cloud drift: base speed by sleep_pressure (drowsier = slower) and
+      // pushed by easterly wind component.
+      float cloud_base = 1.0f / (sp * 5.0f + 1.0f);
+      float cloud_speed = cloud_base + wind_east * (wind_kmh / 30.0f);
+      for (int c = 0; c < MAX_CLOUDS; c++) {
         cloud_x[c] += cloud_speed * dt_s;
-        if (cloud_x[c] > (float)COLS + 5.0f) cloud_x[c] = -5.0f;
+        if (cloud_x[c] > (float)COLS + 6.0f)  cloud_x[c] = -6.0f;
+        if (cloud_x[c] < -6.0f)               cloud_x[c] = (float)COLS + 6.0f;
+      }
+
+      // Rain drop physics: drops fall at ~12 cells/sec, drift x with wind.
+      float drop_fall_rate = 12.0f;
+      float drop_drift_x   = wind_east * (wind_kmh / 20.0f);
+      for (int d = 0; d < n_drops; d++) {
+        if (drop_y[d] < 0.0f) {
+          // Spawn fresh drop at top, random column.
+          drop_x[d] = (float)((d * 71 + (int)(now_ms / 13)) % COLS);
+          drop_y[d] = -((float)(d % 8));
+        }
+        drop_y[d] += drop_fall_rate * dt_s;
+        drop_x[d] += drop_drift_x * dt_s;
+        if (drop_y[d] >= (float)ROWS) {
+          drop_y[d] = -1.0f;  // recycle next frame
+        }
+      }
+      // Inactive drops parked.
+      for (int d = n_drops; d < MAX_DROPS; d++) {
+        drop_y[d] = -1.0f;
       }
 
       // ----- render -------------------------------------------------------
       it.fill(Color(0x0D, 0x0F, 0x1A));
 
-      Color substrate_color(0x4A, 0x4A, 0x40);
       Color star_color(0xD4, 0xCC, 0xB8);
       Color sun_color(0xF4, 0xD0, 0x60);
-      Color cloud_color(0x4A, 0x55, 0x60);
+      Color cloud_clear(0x4A, 0x55, 0x60);
+      Color cloud_rain(0x60, 0x65, 0x70);
       Color horizon_color(0x8A, 0x84, 0x70);
+      Color rain_color(0x6A, 0x80, 0x90);
+      Color trunk_color(0x55, 0x46, 0x36);  // dim warm brown for trunks
+      Color ground_color(0x4A, 0x4A, 0x40);
 
-      // Sky: stars (only at night), then clouds, then sun.
-      if (!is_day) {
+      // Sky: stars (only at night, only if not overcast), then sun.
+      if (!is_day && cloud_pct < 50.0f) {
         for (int i = 0; i < N_STARS; i++) {
-          // Twinkle: brightness in [0,1] from sin with star's phase + slow time.
           float b = (sinf((float)now_ms / 700.0f + star_phase[i]) + 1.0f) * 0.5f;
           const char* g = nullptr;
           if (b > 0.65f)      g = "*";
           else if (b > 0.30f) g = ".";
-          // dimmer stars wink out — visible/invisible carries the twinkle
           if (g != nullptr) {
             it.print(star_x[i] * CELL_W, star_y[i] * CELL_H,
                      id(plex_mono_12), star_color, g);
@@ -430,69 +537,123 @@ display:
         }
       }
 
-      // Clouds: 5-cell horizontal forms drifting left to right.
-      for (int c = 0; c < 2; c++) {
-        int base_x = (int)cloud_x[c];
-        int y = cloud_y[c];
-        for (int k = 0; k < cloud_w[c]; k++) {
-          int col = base_x + k;
-          if (col < 0 || col >= COLS) continue;
-          // Bell shape: edges thin (─), middle thick (━).
-          const char* g = (k == cloud_w[c] / 2) ? "━" : "─";
-          it.print(col * CELL_W, y * CELL_H,
-                   id(plex_mono_12), cloud_color, g);
-        }
-      }
-
-      // Sun: single glyph.
-      if (is_day && sun_x >= 0) {
+      if (is_day && cloud_pct < 75.0f && sun_x >= 0) {
         it.print(sun_x * CELL_W, sun_y_row * CELL_H,
                  id(plex_mono_12), sun_color, sun_glyph);
       }
 
-      // Horizon line: heart pulse picks ─ vs ━ for whole row.
-      const char* h_glyph = (pulse_offset > 0) ? "━" : "─";
+      // Clouds — count by cloud_cover_pct, glyph register by raining.
+      Color cc = is_raining ? cloud_rain : cloud_clear;
+      for (int c = 0; c < n_clouds; c++) {
+        int base_x = (int)cloud_x[c];
+        int y = cloud_y[c];
+        int w = cloud_w[c];
+        for (int k = 0; k < w; k++) {
+          int col = base_x + k;
+          if (col < 0 || col >= COLS) continue;
+          // Bell shape — middle denser. Glyphs are ASCII (font carries them).
+          const char* g;
+          if (k == w / 2)            g = is_raining ? "=" : "~";
+          else if (k == 0 || k == w-1) g = "-";
+          else                         g = is_raining ? "+" : "~";
+          it.print(col * CELL_W, y * CELL_H, id(plex_mono_12), cc, g);
+        }
+      }
+
+      // Rain — vertical streaks falling, drifting with wind.
+      for (int d = 0; d < n_drops; d++) {
+        if (drop_y[d] < 0.0f) continue;
+        int dx = (int)roundf(drop_x[d]);
+        int dy = (int)roundf(drop_y[d]);
+        if (dx < 0 || dx >= COLS) continue;
+        if (dy < 0 || dy >= ROWS) continue;
+        // Slanted glyph hints at wind direction; vertical when calm.
+        const char* g;
+        if (wind_east > 0.4f)       g = "/";
+        else if (wind_east < -0.4f) g = "\\";
+        else                        g = "|";
+        it.print(dx * CELL_W, dy * CELL_H, id(plex_mono_12), rain_color, g);
+      }
+
+      // Horizon line at row 11 (just above the tree trunks). Heart pulse
+      // picks `=` (peak) vs `-` (baseline) for the whole row, so the horizon
+      // breathes with the body.
+      const char* h_glyph = (pulse_offset > 0) ? "=" : "-";
       for (int col = 0; col < COLS; col++) {
-        // Skip the horizon segment immediately under the sun for a clean
-        // sunrise/sunset eclipse moment.
+        // Skip horizon under the setting/rising sun for a clean eclipse.
         if (is_day && sun_x == col && sun_y_row >= 5) continue;
         it.print(col * CELL_W, HORIZON_ROW * CELL_H,
                  id(plex_mono_12), horizon_color, h_glyph);
       }
 
-      // Foreground mountains: from peak row down to bottom, glyph by depth.
-      for (int col = 0; col < COLS; col++) {
-        int peak = peaks[col];
-        for (int row = peak; row < ROWS; row++) {
-          int depth = row - peak;
-          const char* g;
-          if (depth == 0)      g = "▒";
-          else if (depth == 1) g = "▓";
-          else                 g = "█";
-          it.print(col * CELL_W, row * CELL_H, id(plex_mono_12), tint, g);
+      // Trees: trunk + crown, swaying with wind. Crown sways more than trunk.
+      for (int t = 0; t < N_TREES; t++) {
+        float sway = sinf((float)now_ms / 800.0f + tree_phase[t]) * sway_amp;
+        int crown_dx = (int)roundf(sway);
+        int trunk_dx = (int)roundf(sway * 0.4f);  // trunk less mobile
+        int base_col = tree_col[t];
+        int h        = tree_h[t];
+        int cw       = tree_crown_w[t];
+        // Trunk: rows ROWS-2 and ROWS-1 (bottom 2 rows), single `|`.
+        for (int r = ROWS - 2; r < ROWS; r++) {
+          int col = base_col + trunk_dx;
+          if (col >= 0 && col < COLS) {
+            it.print(col * CELL_W, r * CELL_H, id(plex_mono_12), trunk_color, "|");
+          }
+        }
+        // Crown: rows above trunk, h-2 rows tall. Width tapers from 1 at
+        // top to cw at bottom of crown. Trees can rise above the horizon
+        // (foreground in front of distance — that's the perspective).
+        int crown_top = ROWS - 2 - (h - 2);
+        if (crown_top < 1) crown_top = 1;
+        int crown_rows = ROWS - 2 - crown_top;
+        for (int rk = 0; rk < crown_rows; rk++) {
+          int r = crown_top + rk;
+          // Width = max 1, ramping up
+          int w_here = 1 + (rk * (cw - 1)) / (crown_rows > 1 ? crown_rows - 1 : 1);
+          if (w_here < 1)  w_here = 1;
+          if (w_here > cw) w_here = cw;
+          int half = w_here / 2;
+          for (int k = -half; k <= half; k++) {
+            int col = base_col + crown_dx + k;
+            if (col < 0 || col >= COLS) continue;
+            // Crown glyph: edges `*`, center `o` or `O` for fuller crown.
+            const char* g;
+            if (w_here >= 5 && k == 0)        g = "O";
+            else if (k == 0)                  g = "o";
+            else                              g = "*";
+            it.print(col * CELL_W, r * CELL_H, id(plex_mono_12), tint, g);
+          }
         }
       }
 
-      // ----- clear-zone for wordmark + line (small, only behind text) -----
-      // Mountain valley already keeps the area below clear; this rect just
-      // handles the wordmark band cleanly.
-      it.filled_rectangle(76, 86, 168, 74, Color(0x0D, 0x0F, 0x1A));
+      // Sparse ground texture in tree-free columns of the bottom row.
+      // Cheap atmospheric detail — `.` and `,` based on column parity.
+      for (int col = 0; col < COLS; col++) {
+        // Skip tree columns and wordmark valley
+        bool near_tree = false;
+        for (int t = 0; t < N_TREES; t++) {
+          if (col >= tree_col[t] - 1 && col <= tree_col[t] + 1) { near_tree = true; break; }
+        }
+        if (near_tree) continue;
+        // sparse — every 3rd column
+        if ((col + (int)(now_ms / 1500)) % 3 != 0) continue;
+        const char* g = (col % 2) ? "." : ",";
+        it.print(col * CELL_W, (ROWS - 1) * CELL_H,
+                 id(plex_mono_12), ground_color, g);
+      }
 
-      // NARADA wordmark, mood-tint-neutral text-bright.
+      // ----- clear-zone for wordmark + line ------------------------------
+      it.filled_rectangle(76, 86, 168, 74, Color(0x0D, 0x0F, 0x1A));
       it.print(160, 112, id(plex_mono_28), Color(0xD4, 0xCC, 0xB8),
                TextAlign::CENTER, "NARADA");
-
-      // Thin mood-tinted line under wordmark, 80px wide.
       it.line(120, 148, 200, 148, tint);
-
-      // Presence dot bottom-right.
       if (id(attention_mode) != std::string("inward")) {
         it.filled_circle(296, 228, 4, tint);
       }
 
       // backwards-compat: heartbeat_status_str / current_thought_str remain
-      // updated by the daemon but are intentionally not rendered. Services
-      // are visual no-ops; globals queued for removal after Cycle 3.
+      // updated by the daemon but are intentionally not rendered.
 
 text_sensor:
   - platform: wifi_info
@@ -642,25 +803,73 @@ text_sensor:
       snprintf(buf, sizeof(buf), "%d", remaining);
       return std::string(buf);
 
+  # --- v1.0 weather proprioception ---
+  - platform: template
+    name: "Weather Wind Speed Kmh"
+    id: weather_wind_speed_kmh_sensor
+    update_interval: 5s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.1f", id(weather_wind_speed_kmh));
+      return std::string(buf);
+
+  - platform: template
+    name: "Weather Wind Direction Deg"
+    id: weather_wind_direction_deg_sensor
+    update_interval: 5s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.1f", id(weather_wind_direction_deg));
+      return std::string(buf);
+
+  - platform: template
+    name: "Weather Precipitation Mm Hr"
+    id: weather_precipitation_mm_hr_sensor
+    update_interval: 5s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.2f", id(weather_precipitation_mm_hr));
+      return std::string(buf);
+
+  - platform: template
+    name: "Weather Cloud Cover Pct"
+    id: weather_cloud_cover_pct_sensor
+    update_interval: 5s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.0f", id(weather_cloud_cover_pct));
+      return std::string(buf);
+
+  - platform: template
+    name: "Weather Code"
+    id: weather_code_sensor
+    update_interval: 5s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%d", id(weather_code));
+      return std::string(buf);
+
+  - platform: template
+    name: "Weather Temperature C"
+    id: weather_temperature_c_sensor
+    update_interval: 5s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.1f", id(weather_temperature_c));
+      return std::string(buf);
+
 font:
-  # Substrate glyph field — IBM Plex Mono Regular at 12px.
-  # Glyph subset = standard density ramp + horizon-engine glyphs (block
-  # elements for mountains, box-drawing for horizon line, geometric for
-  # sun, sparkle for stars).
-  - file:
-      type: gfonts
-      family: "IBM Plex Mono"
-      weight: 400
+  # Local IBM Plex Mono TTFs (extracted to embodiment/assets/fonts/). Glyph
+  # vocabulary is constrained to ASCII because the upstream font does NOT
+  # carry block elements / box drawing / geometric shapes — gfonts was
+  # silently substituting tofu for those, which we noticed during Cycle
+  # 2.6 prep. ASCII-only is also the more honest aesthetic.
+  - file: "../assets/fonts/IBMPlexMono-Regular.ttf"
     id: plex_mono_12
     size: 12
-    glyphs: " .'\",;:!|+*x%#@░▒▓█─━oO"
+    glyphs: " .,:;'\"!|+*xoO@_~=#%-/"
 
-  # Wordmark — IBM Plex Mono Medium at 28px. NARADA is the only string drawn
-  # at this size in Cycle 2; restrict glyph set to keep flash small.
-  - file:
-      type: gfonts
-      family: "IBM Plex Mono"
-      weight: 500
+  - file: "../assets/fonts/IBMPlexMono-Medium.ttf"
     id: plex_mono_28
     size: 28
     glyphs: "ADNR"
