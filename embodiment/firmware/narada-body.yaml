@@ -347,14 +347,18 @@ display:
       static int     tree_col[N_TREES];      // base column
       static int     tree_h[N_TREES];        // total height (cells)
       static int     tree_crown_w[N_TREES];  // crown max width
-      static int     tree_plane[N_TREES];    // 0=horizon, 1=mid, 2=fg (extends below screen)
+      static int     tree_plane[N_TREES];    // 0=horizon, 1=mid, 2=fg
+      static int     tree_trunk_h[N_TREES];  // trunk rows; 0 = bush (no trunk)
+      static int     tree_lean[N_TREES];     // crown horizontal offset (-2..+2)
       static float   tree_phase[N_TREES];
 
       static float   cloud_x[MAX_CLOUDS];
-      // Cloud y rows spread across sky. Higher rows (lower y) = closer
-      // overhead = drift faster (parallax).
+      // Smaller, more line-like clouds. Each one a slight variation of
+      // a horizontal stroke — distinct shape per cloud index, no two
+      // identical. Higher in sky (lower y) = closer overhead = parallax-
+      // faster drift.
       static const int cloud_y[MAX_CLOUDS] = {1, 4, 2, 5};
-      static const int cloud_w[MAX_CLOUDS] = {6, 5, 7, 4};
+      static const int cloud_w[MAX_CLOUDS] = {4, 3, 5, 3};
 
       static float   drop_x[MAX_DROPS];
       static float   drop_y[MAX_DROPS];
@@ -387,26 +391,29 @@ display:
           s ^= s << 13; s ^= s >> 17; s ^= s << 5;
           star_phase[i] = (float)(s % 1000) / 1000.0f * 6.2831853f;
         }
-        // 12 trees in three depth planes — atmospheric perspective.
-        //   plane 0 = ON HORIZON — single-glyph silhouettes sitting on
-        //             the horizon line, h=1-2, no trunk, no sway.
-        //   plane 1 = MIDGROUND — small/medium trees in the grass band,
-        //             trunk + crown, partial sway, partial blend.
-        //   plane 2 = FOREGROUND — TALL trees with crowns up near the
-        //             top of the sky and trunks running to the screen
-        //             bottom (implying they continue below the screen).
-        //             Full sway, full mood tint, 2-cell trunks.
-        // Background/midground trees inside the wordmark valley get
-        // clipped by the clear-zone — reads as "trees behind the sign."
-        const int t_cols[N_TREES]  = {  4, 14, 22, 30,   8, 18, 33, 39,    1,  7, 36, 43};
-        const int t_h[N_TREES]     = {  1,  2,  1,  2,   4,  3,  4,  5,   11, 12, 12, 11};
-        const int t_cw[N_TREES]    = {  1,  1,  1,  1,   3,  3,  3,  3,    5,  7,  7,  5};
-        const int t_plane[N_TREES] = {  0,  0,  0,  0,   1,  1,  1,  1,    2,  2,  2,  2};
+        // 12 plants in three depth planes — atmospheric perspective.
+        // Heights are deliberately varied (not uniform) and some plants
+        // are bushes (trunk_h = 0) instead of trees, so the silhouette
+        // has visual rhythm rather than a uniform forest.
+        //   plane 0 = ON HORIZON — tiny silhouettes on the horizon row.
+        //   plane 1 = MIDGROUND — short/medium plants on the grass.
+        //   plane 2 = FOREGROUND — modest trees and bushes (h=3-6, NOT
+        //             skyscraper-tall — they shouldn't dominate airspace).
+        // The `lean` field offsets the crown horizontally relative to
+        // the trunk so trees aren't all symmetric blobs.
+        const int t_cols[N_TREES]    = {  4, 14, 22, 30,   8, 18, 33, 39,    1,  7, 36, 43};
+        const int t_h[N_TREES]       = {  1,  2,  1,  2,   3,  2,  4,  3,    5,  3,  6,  4};
+        const int t_cw[N_TREES]      = {  1,  1,  1,  1,   2,  3,  3,  2,    3,  5,  3,  4};
+        const int t_plane[N_TREES]   = {  0,  0,  0,  0,   1,  1,  1,  1,    2,  2,  2,  2};
+        const int t_trunk_h[N_TREES] = {  0,  0,  0,  0,   1,  0,  2,  1,    2,  0,  3,  1};
+        const int t_lean[N_TREES]    = {  0,  0,  0,  0,   0, -1,  0,  1,    1,  0, -1,  1};
         for (int t = 0; t < N_TREES; t++) {
           tree_col[t]     = t_cols[t];
           tree_h[t]       = t_h[t];
           tree_crown_w[t] = t_cw[t];
           tree_plane[t]   = t_plane[t];
+          tree_trunk_h[t] = t_trunk_h[t];
+          tree_lean[t]    = t_lean[t];
           s ^= s << 13; s ^= s >> 17; s ^= s << 5;
           tree_phase[t] = (float)(s % 1000) / 1000.0f * 6.2831853f;
         }
@@ -642,32 +649,33 @@ display:
                  id(plex_mono_12), moon_color, moon_glyph);
       }
 
-      // Clouds — 2-row bell-shaped silhouettes with parallax drift.
-      // Top row narrower than bottom; edges thinner glyphs.
+      // Clouds — small one-row line strokes, slight per-cloud variation
+      // so no two clouds look identical. They should read as horizontal
+      // wisps, not saucers (the UFO already does that job).
       Color cc = is_raining ? cloud_rain : cloud_clear;
+      const char* base_g = is_raining ? "=" : "~";
       for (int c = 0; c < n_clouds; c++) {
         int base_x = (int)cloud_x[c];
         int y      = cloud_y[c];
         int w      = cloud_w[c];
-        // Top row: narrower (1 cell shorter on each side), middle-only fill.
-        for (int k = 1; k < w - 1; k++) {
-          int col = base_x + k;
-          if (col < 0 || col >= COLS) continue;
-          const char* g;
-          if (k == w / 2)               g = is_raining ? "=" : "~";
-          else if (k == 1 || k == w-2)  g = ".";   // tapered top edges
-          else                          g = is_raining ? "=" : "~";
-          it.print(col * CELL_W, y * CELL_H, id(plex_mono_12), cc, g);
-        }
-        // Bottom row: full width, thicker silhouette.
         for (int k = 0; k < w; k++) {
           int col = base_x + k;
           if (col < 0 || col >= COLS) continue;
-          const char* g;
-          if (k == 0 || k == w - 1)     g = ".";   // soft outer edges
-          else if (k == w / 2)          g = is_raining ? "=" : "~";
-          else                          g = is_raining ? "=" : "~";
-          it.print(col * CELL_W, (y + 1) * CELL_H, id(plex_mono_12), cc, g);
+          const char* g = base_g;
+          // Per-cloud shape variation:
+          //   c%4 == 0: simple straight stroke
+          //   c%4 == 1: dipped middle (one `-` in the middle)
+          //   c%4 == 2: tapered ends with `.`
+          //   c%4 == 3: drifting tail — `.` at trailing edge
+          int variation = c & 3;
+          if (variation == 1 && k == w / 2) {
+            g = "-";
+          } else if (variation == 2 && (k == 0 || k == w - 1)) {
+            g = ".";
+          } else if (variation == 3 && k == w - 1) {
+            g = ".";
+          }
+          it.print(col * CELL_W, y * CELL_H, id(plex_mono_12), cc, g);
         }
       }
 
@@ -770,25 +778,27 @@ display:
           continue;
         }
 
-        // Planes 1 + 2: standing tree, swaying.
+        // Planes 1 + 2: standing plant. trunk_h=0 means a bush (crown
+        // only, no trunk). lean offsets the crown horizontally for
+        // asymmetry — not all trees are symmetric blobs.
         float wind_sway  = sinf((float)now_ms / 800.0f + tree_phase[t]) * sway_amp;
         float micro      = sinf((float)now_ms / 3000.0f + tree_phase[t] * 1.5f) * 0.4f;
         float crown_sway = (wind_sway + micro) * plane_sway[p];
         float trunk_sway = (wind_sway * 0.4f + micro * 0.7f) * plane_sway[p];
-        int crown_dx = (int)roundf(crown_sway);
+        int crown_dx = (int)roundf(crown_sway) + tree_lean[t];
         int trunk_dx = (int)roundf(trunk_sway);
 
-        int trunk_w = (p == 2) ? 2 : 1;
-        // Crown takes either 3 (mid) or 5 (foreground) rows from top.
-        int crown_h = (p == 2) ? 5 : 3;
-        if (crown_h > h - 1) crown_h = h - 1;
+        int trunk_h = tree_trunk_h[t];
+        if (trunk_h > h - 1) trunk_h = h - 1;
+        int crown_h = h - trunk_h;
+        if (crown_h < 1) crown_h = 1;
         int crown_top = ROWS - h;
         if (crown_top < 0) crown_top = 0;
         int trunk_top = crown_top + crown_h;
         if (trunk_top > ROWS) trunk_top = ROWS;
+        int trunk_w = (p == 2 && trunk_h >= 2) ? 2 : 1;
 
-        // Trunk: from trunk_top down to ROWS-1 (so foreground trees go
-        // all the way to the screen bottom — reads as "continues below").
+        // Trunk (only if trunk_h > 0; bushes skip this).
         for (int r = trunk_top; r < ROWS; r++) {
           for (int dx = 0; dx < trunk_w; dx++) {
             int col = base_col + trunk_dx + dx;
@@ -799,22 +809,32 @@ display:
           }
         }
 
-        // Crown: above trunk, tapered width from 1 (top) to cw (bottom).
+        // Crown: tapered width, with lean asymmetry built in via
+        // crown_dx. For bushes (no trunk), the crown sits on the ground.
         for (int rk = 0; rk < crown_h; rk++) {
           int r = crown_top + rk;
           if (r < 0 || r >= ROWS) continue;
-          int w_here = 1 + (rk * (cw - 1)) / (crown_h > 1 ? crown_h - 1 : 1);
+          // Width grows from 1 at top to cw at bottom of crown.
+          int w_here = 1 + (rk * (cw - 1)) /
+                          (crown_h > 1 ? crown_h - 1 : 1);
           if (w_here < 1)  w_here = 1;
           if (w_here > cw) w_here = cw;
-          int half = w_here / 2;
-          for (int k = -half; k <= half; k++) {
+          // Asymmetric extents: lean shifts which side has more crown.
+          int half_l = w_here / 2;
+          int half_r = w_here - 1 - half_l;
+          for (int k = -half_l; k <= half_r; k++) {
             int col = base_col + crown_dx + k;
             if (col < 0 || col >= COLS) continue;
+            // Glyph: edges `*`, near-center mix in `o`/`O` with per-tree
+            // randomness so each tree's crown reads slightly differently.
             const char* g;
-            if (w_here >= 5 && k == 0)        g = "O";
-            else if (w_here >= 3 && k == 0)   g = "o";
-            else                              g = "*";
-            it.print(col * CELL_W, r * CELL_H, id(plex_mono_12), tree_color, g);
+            int seed = (k + t * 3 + (int)(now_ms / 5000)) & 3;
+            if (k == 0 && w_here >= 5)               g = "O";
+            else if (k == 0 && w_here >= 3)          g = "o";
+            else if (seed == 0 && w_here >= 3)       g = "o";
+            else                                      g = "*";
+            it.print(col * CELL_W, r * CELL_H,
+                     id(plex_mono_12), tree_color, g);
           }
         }
       }
@@ -848,24 +868,32 @@ display:
       int line_extra = (int)(breath * 8.0f);
       it.line(120 - line_extra, 148, 200 + line_extra, 148, tint);
 
-      // Presence indicator — small UFO drifting through the sky band,
-      // bobbing gently. Replaces the corner dot. The shape `(o)` (or
-      // `(O)` when attention is outward) reads as a small craft. Hidden
-      // when attention is inward (the body is looking inside, not out).
-      // Drifts left-to-right, looping every ~90s.
+      // Presence indicator — flying saucer drifting through the sky.
+      // Two-row shape:    _      <- dome
+      //                  (o)     <- saucer body
+      // The dome above the body makes it read unmistakably as a UFO.
+      // Center glyph is `O` when attention is outward (alert) and `o`
+      // when diffuse (drifting). Hidden when attention is inward.
+      // 90-second loop across the sky, gentle vertical bob.
       if (id(attention_mode) != std::string("inward")) {
         float ufo_t = fmodf((float)now_ms, 90000.0f) / 90000.0f;
-        int ufo_cx = (int)(ufo_t * (float)(COLS - 4)) + 2;     // cols 2 .. COLS-2
-        int ufo_y  = 1 + (int)roundf(sinf((float)now_ms / 2200.0f) + 1.0f);  // rows 0..2
+        int ufo_cx = (int)(ufo_t * (float)(COLS - 4)) + 2;
+        int ufo_y_top = (int)roundf(sinf((float)now_ms / 2200.0f) + 1.0f);
+        int ufo_y_bot = ufo_y_top + 1;
         int gx = ufo_cx - 1;
-        if (gx >= 0 && gx + 2 < COLS) {
-          // Render `(`, center, `)` across 3 cells.
-          // Center glyph: `O` if attention outward, `o` for diffuse.
+        if (gx >= 0 && gx + 2 < COLS && ufo_y_bot < HORIZON_ROW) {
+          // Dome
+          it.print((gx + 1) * CELL_W, ufo_y_top * CELL_H,
+                   id(plex_mono_12), tint, "_");
+          // Saucer body
           const char* center_g =
             (id(attention_mode) == std::string("outward")) ? "O" : "o";
-          it.print(gx        * CELL_W, ufo_y * CELL_H, id(plex_mono_12), tint, "(");
-          it.print((gx + 1)  * CELL_W, ufo_y * CELL_H, id(plex_mono_12), tint, center_g);
-          it.print((gx + 2)  * CELL_W, ufo_y * CELL_H, id(plex_mono_12), tint, ")");
+          it.print(gx       * CELL_W, ufo_y_bot * CELL_H,
+                   id(plex_mono_12), tint, "(");
+          it.print((gx + 1) * CELL_W, ufo_y_bot * CELL_H,
+                   id(plex_mono_12), tint, center_g);
+          it.print((gx + 2) * CELL_W, ufo_y_bot * CELL_H,
+                   id(plex_mono_12), tint, ")");
         }
       }
 
