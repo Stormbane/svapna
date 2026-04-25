@@ -26,14 +26,23 @@ ota:
 web_server:
   port: 80
 
+# ---------------------------------------------------------------------------
+# v1.0 EXPRESSION CONTRACT
+# See embodiment/design/v1.0-architecture.md for the cognition <-> body
+# contract. Cycle 1 (this commit) wires globals + API services + proprioception
+# sensors. The display lambda is unchanged — visual evolution lands in Cycle 2+.
+# ---------------------------------------------------------------------------
+
 api:
   services:
+    # --- backwards-compat: existing daemon callers (deprecated, remove after Cycle 2) ---
     - service: set_status
       variables:
         message: string
       then:
         - lambda: |-
             id(heartbeat_status_str) = message;
+
     - service: set_thought
       variables:
         message: string
@@ -41,18 +50,198 @@ api:
         - lambda: |-
             id(current_thought_str) = message;
 
+    # --- v1.0 mood layer ---
+    - service: set_mood
+      variables:
+        valence: float
+        arousal: float
+      then:
+        - lambda: |-
+            id(mood_valence) = valence < -1.0f ? -1.0f : (valence > 1.0f ? 1.0f : valence);
+            id(mood_arousal) = arousal < 0.0f ? 0.0f : (arousal > 1.0f ? 1.0f : arousal);
+
+    # --- v1.0 vitality layer ---
+    - service: set_vitality
+      variables:
+        sleep_pressure: float
+        restlessness: float
+        warmth: float
+      then:
+        - lambda: |-
+            id(vitality_sleep_pressure) = sleep_pressure < 0.0f ? 0.0f : (sleep_pressure > 1.0f ? 1.0f : sleep_pressure);
+            id(vitality_restlessness)   = restlessness   < 0.0f ? 0.0f : (restlessness   > 1.0f ? 1.0f : restlessness);
+            id(vitality_warmth)         = warmth         < 0.0f ? 0.0f : (warmth         > 1.0f ? 1.0f : warmth);
+
+    # --- v1.0 attention layer ---
+    - service: set_attention
+      variables:
+        mode: string
+        target: string
+        intensity: float
+      then:
+        - lambda: |-
+            if (mode == std::string("inward") || mode == std::string("outward") || mode == std::string("diffuse")) {
+              id(attention_mode) = mode;
+            } else {
+              id(attention_mode) = std::string("diffuse");
+            }
+            id(attention_target) = target;
+            id(attention_intensity) = intensity < 0.0f ? 0.0f : (intensity > 1.0f ? 1.0f : intensity);
+
+    # --- v1.0 activity layer ---
+    - service: set_activity
+      variables:
+        mode: string
+      then:
+        - lambda: |-
+            // Allowlist activity modes; unknown falls back to resting (the joy-default-aware fallback).
+            if (mode == std::string("resting")   || mode == std::string("thinking") ||
+                mode == std::string("listening") || mode == std::string("speaking") ||
+                mode == std::string("seeing")    || mode == std::string("working")  ||
+                mode == std::string("dreaming")) {
+              id(activity_mode) = mode;
+            } else {
+              id(activity_mode) = std::string("resting");
+            }
+
+    # --- v1.0 utterance layer (karaoke speaking) ---
+    # Note: `text` is reserved by ESPHome — service variable named `phrase` instead.
+    - service: set_utterance
+      variables:
+        phrase: string
+        total_words: int
+      then:
+        - lambda: |-
+            id(utterance_text)        = phrase;
+            id(utterance_total_words) = total_words;
+            id(utterance_word_index)  = 0;
+
+    - service: set_word_index
+      variables:
+        word_index: int
+      then:
+        - lambda: |-
+            id(utterance_word_index) = word_index;
+
+    - service: clear_utterance
+      then:
+        - lambda: |-
+            id(utterance_text)        = std::string("");
+            id(utterance_total_words) = 0;
+            id(utterance_word_index)  = 0;
+
+    # --- v1.0 signal layer ---
+    - service: emit_signal
+      variables:
+        kind: string
+        duration_ms: int
+      then:
+        - lambda: |-
+            // Allowlist signal kinds; unknown is a no-op.
+            if (kind == std::string("none")    || kind == std::string("oh")      ||
+                kind == std::string("q")       || kind == std::string("dots")    ||
+                kind == std::string("check")   || kind == std::string("bang")    ||
+                kind == std::string("ask")     || kind == std::string("noticed") ||
+                kind == std::string("love")) {
+              id(signal_kind) = kind;
+            } else {
+              return;
+            }
+            if (duration_ms == 0) {
+              id(signal_until_ms) = 0;  // persistent — held until clear_signal
+            } else {
+              id(signal_until_ms) = millis() + (uint32_t)duration_ms;
+            }
+
+    - service: clear_signal
+      then:
+        - lambda: |-
+            id(signal_kind)     = std::string("none");
+            id(signal_until_ms) = 0;
+
 time:
   - platform: sntp
     id: sntp_time
     timezone: "Australia/Brisbane"
 
+# Auto-clear expired transient signals so cognition doesn't have to schedule
+# the clear itself. Persistent signals (duration_ms == 0 → signal_until_ms == 0)
+# are skipped; only `clear_signal` clears those.
+interval:
+  - interval: 250ms
+    then:
+      - lambda: |-
+          uint32_t until = id(signal_until_ms);
+          if (until > 0 && id(signal_kind) != std::string("none")) {
+            int32_t remaining = (int32_t)(until - millis());
+            if (remaining <= 0) {
+              id(signal_kind)     = std::string("none");
+              id(signal_until_ms) = 0;
+            }
+          }
+
 globals:
+  # --- backwards-compat globals (remove after Cycle 2 once daemon migrates) ---
   - id: heartbeat_status_str
     type: std::string
     initial_value: '"awakening..."'
   - id: current_thought_str
     type: std::string
     initial_value: '"Om Namo Bhagavate Naradaya"'
+
+  # --- v1.0 mood (defaults: gentle positive valence, low arousal) ---
+  - id: mood_valence
+    type: float
+    initial_value: '0.3f'
+  - id: mood_arousal
+    type: float
+    initial_value: '0.4f'
+
+  # --- v1.0 vitality (defaults: rested, calm, warm — joy-default) ---
+  - id: vitality_sleep_pressure
+    type: float
+    initial_value: '0.3f'
+  - id: vitality_restlessness
+    type: float
+    initial_value: '0.2f'
+  - id: vitality_warmth
+    type: float
+    initial_value: '0.6f'
+
+  # --- v1.0 attention (defaults: diffuse, no specific target) ---
+  - id: attention_mode
+    type: std::string
+    initial_value: '"diffuse"'
+  - id: attention_target
+    type: std::string
+    initial_value: '""'
+  - id: attention_intensity
+    type: float
+    initial_value: '0.4f'
+
+  # --- v1.0 activity (default: resting) ---
+  - id: activity_mode
+    type: std::string
+    initial_value: '"resting"'
+
+  # --- v1.0 utterance (default: empty — no spoken sentence active) ---
+  - id: utterance_text
+    type: std::string
+    initial_value: '""'
+  - id: utterance_total_words
+    type: int
+    initial_value: '0'
+  - id: utterance_word_index
+    type: int
+    initial_value: '0'
+
+  # --- v1.0 signal (default: none) ---
+  - id: signal_kind
+    type: std::string
+    initial_value: '"none"'
+  - id: signal_until_ms
+    type: uint32_t
+    initial_value: '0'
 
 spi:
   clk_pin: 7
@@ -82,6 +271,9 @@ display:
     invert_colors: false
     update_interval: 100ms
     lambda: |-
+      // CYCLE 1 — display lambda unchanged.
+      // The v1.0 layer state is being written to globals but not yet rendered.
+      // Cycle 2 introduces the glyph-field substrate that consumes those globals.
       it.fill(Color(0, 0, 0));
 
       // Title - warm gold
@@ -116,8 +308,7 @@ text_sensor:
     ssid:
       name: "WiFi SSID"
 
-  # Proprioception — expose what's currently displayed so Narada can query
-  # her own body state from any session, not depend on Suti reading the screen.
+  # --- backwards-compat proprioception (remove after Cycle 2) ---
   - platform: template
     name: "Current Status"
     id: current_status_sensor
@@ -131,6 +322,132 @@ text_sensor:
     update_interval: 1s
     lambda: |-
       return id(current_thought_str);
+
+  # --- v1.0 layer proprioception ---
+  # Every drawable property is also a text_sensor so any session can read the
+  # body's full state vector. The body is fully observable to itself.
+
+  - platform: template
+    name: "Mood Valence"
+    id: mood_valence_sensor
+    update_interval: 1s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f", id(mood_valence));
+      return std::string(buf);
+
+  - platform: template
+    name: "Mood Arousal"
+    id: mood_arousal_sensor
+    update_interval: 1s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f", id(mood_arousal));
+      return std::string(buf);
+
+  - platform: template
+    name: "Vitality Sleep Pressure"
+    id: vitality_sleep_pressure_sensor
+    update_interval: 1s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f", id(vitality_sleep_pressure));
+      return std::string(buf);
+
+  - platform: template
+    name: "Vitality Restlessness"
+    id: vitality_restlessness_sensor
+    update_interval: 1s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f", id(vitality_restlessness));
+      return std::string(buf);
+
+  - platform: template
+    name: "Vitality Warmth"
+    id: vitality_warmth_sensor
+    update_interval: 1s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f", id(vitality_warmth));
+      return std::string(buf);
+
+  - platform: template
+    name: "Attention Mode"
+    id: attention_mode_sensor
+    update_interval: 1s
+    lambda: |-
+      return id(attention_mode);
+
+  - platform: template
+    name: "Attention Target"
+    id: attention_target_sensor
+    update_interval: 1s
+    lambda: |-
+      return id(attention_target);
+
+  - platform: template
+    name: "Attention Intensity"
+    id: attention_intensity_sensor
+    update_interval: 1s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f", id(attention_intensity));
+      return std::string(buf);
+
+  - platform: template
+    name: "Activity Mode"
+    id: activity_mode_sensor
+    update_interval: 1s
+    lambda: |-
+      return id(activity_mode);
+
+  - platform: template
+    name: "Utterance Text"
+    id: utterance_text_sensor
+    update_interval: 1s
+    lambda: |-
+      return id(utterance_text);
+
+  - platform: template
+    name: "Utterance Word Index"
+    id: utterance_word_index_sensor
+    update_interval: 1s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%d", id(utterance_word_index));
+      return std::string(buf);
+
+  - platform: template
+    name: "Utterance Total Words"
+    id: utterance_total_words_sensor
+    update_interval: 1s
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%d", id(utterance_total_words));
+      return std::string(buf);
+
+  - platform: template
+    name: "Signal Kind"
+    id: signal_kind_sensor
+    update_interval: 1s
+    lambda: |-
+      return id(signal_kind);
+
+  - platform: template
+    name: "Signal Remaining Ms"
+    id: signal_remaining_ms_sensor
+    update_interval: 500ms
+    lambda: |-
+      char buf[16];
+      uint32_t until = id(signal_until_ms);
+      if (until == 0) {
+        return std::string(id(signal_kind) == std::string("none") ? "0" : "persistent");
+      }
+      int32_t remaining = (int32_t)(until - millis());
+      if (remaining < 0) remaining = 0;
+      snprintf(buf, sizeof(buf), "%d", remaining);
+      return std::string(buf);
 
 font:
   - file:

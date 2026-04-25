@@ -2,7 +2,7 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-18 — reality-correction session with Suti.
+**Last updated**: 2026-04-25 — v1.0 Express Path planned + Cycle 1 firmware written.
 
 ---
 
@@ -116,56 +116,73 @@ switch.
 
 ---
 
-## Revised next pick
+## v1.0 Express Path — supersedes P2.3 single-state plan
 
-**P2.3 — extend narada-body.yaml to support expression states.**
+The earlier "scope to one state" plan (P2.3 → THINKING only) has been
+superseded by a layer-architecture refactor. The v1.0 plan is documented
+in three Cycle 0 design docs:
 
-This is substantial — scope it to ONE NEW STATE this cycle, not all
-five. Start with THINKING (clearly different from current RESTING-like
-layout) to prove the switching mechanism. Add the rest in subsequent
-cycles.
+- `embodiment/design/v1.0-architecture.md` — cognition↔body contract:
+  six independent layers (mood / vitality / attention / activity /
+  utterance / signal), API service signatures, render precedence,
+  proprioception schema, touch contract (noticed-eye + love-bloom),
+  failure modes, joy-default in the layer defaults.
+- `embodiment/design/v1.0-vocabulary.md` — IBM Plex Mono picked.
+  Visual style guide: density ramps, motion primitives, character
+  compositions, texture vocabulary, mood map, composition rules.
+- `embodiment/design/v1.0-compositions.md` — per-state screen sketches
+  with grid renderings: RESTING / THINKING / LISTENING /
+  SPEAKING-with-karaoke / WORKING / DREAMING / DELIGHTED / NOTICED /
+  LOVE plus the smaller signal overlays.
 
-Concrete steps for P2.3 (one cycle, scoped to THINKING only):
+Why the change: a single `expression_state` enum string couldn't carry
+mood, vitality, or utterance simultaneously, and didn't compose with
+the touch contract or with the eventual humanoid-body work (Unitree
+G1 framing — see `~/.narada/projects/svapna/2026/04-25.md`). The layer
+model scales; the enum did not.
 
-1. **Read `embodiment/firmware/narada-body.yaml` fully** to understand
-   the current globals, lambda, services.
-2. **Read `embodiment/design/P2.2-expression-states.md`** for the
-   THINKING spec (3 teal dots chasing left-to-right at 400ms/page).
-3. **Add to narada-body.yaml:**
-   - New global `expression_state: string, initial "RESTING"`
-   - New API service `set_expression_state(state)` that writes the
-     global
-   - Extend the display lambda with `if (expression_state == "THINKING")
-     { ... } else { existing layout }` — THINKING renders three teal
-     dots (`Color(80,150,150)`), chase position derived from a pulse
-     counter like the heart pulse
-4. **Compile**: `python -m esphome compile embodiment/firmware/narada-body.yaml`
-5. **Flash**: `python -m esphome upload embodiment/firmware/narada-body.yaml`
-6. **Add to `src/svapna/heartbeat/display.py`:**
-   - New method `set_expression_state(state: str) -> bool` that calls
-     the new API service
-7. **Test flow**: manually call `DisplayClient().set_expression_state("THINKING")`
-   from a python REPL and verify the device switches visual. Revert
-   with `set_expression_state("RESTING")`.
-8. **Commit**: `heartbeat(embodiment): P2.3 add THINKING expression
-   state to firmware + client` with Narada co-author trailer.
+### TTS — decided
 
-Do NOT wire the heartbeat daemon to call `set_expression_state` in
-this cycle — that's a follow-up cycle once THINKING and RESTING both
-work. This cycle only proves the mechanism.
+**Kokoro-82M** (Apache 2.0, free) via Kokoro-FastAPI. Native
+word-level timestamps for karaoke. ~300ms first-chunk on RTX 3090.
+~1GB VRAM. Backup: Chatterbox (MIT, has voice cloning, needs WhisperX
+wrap for word timing). Voice character A/B/C experiment scheduled for
+before Cycle 5. See `~/.narada/projects/svapna/2026/04-25.md` for
+the full pick rationale and the experiment utterances.
+
+### Cycle progress
+
+- [x] **Cycle 0** — design docs written. 2026-04-25.
+- [x] **Cycle 1** — layer scaffolding refactor of `narada-body.yaml`.
+      Added globals, API services, proprioception text_sensors for all
+      six layers + signal auto-clear interval automation. Display
+      lambda preserved exactly so the visual is unchanged. Created
+      `src/svapna/body/layers.py` (typed dataclasses) and
+      `src/svapna/body/expression.py` (ExpressionClient — stateless,
+      fail-soft, mirrors DisplayClient pattern). Compile pending; flash
+      pending Suti's go-ahead. 2026-04-25.
+- [ ] **Cycle 2** — substrate glyph field + RESTING composition.
+      First visual change.
+- [ ] **Cycle 3** — THINKING + WORKING activity modes.
+- [ ] **Cycle 4** — signals + DELIGHTED.
+- [ ] **Cycle 5** — LISTENING + SPEAKING (karaoke + waveform). Touch
+      contract (noticed + love). Voice character experiment runs in
+      this window.
+- [ ] **Cycle 6** — DREAMING + mood-tinting + transition polish.
 
 ### Cleanup backlog (not blocking)
 
 A future BUILD cycle should:
 - Delete `src/svapna/embodiment/esp_client.py`, `__init__.py`,
-  `tests/test_esp_client.py` (redundant with display.py)
-- Delete or fold `embodiment/firmware/README.md` and
-  `embodiment/assets/README.md` into the real `embodiment/firmware/`
-  structure
+  `tests/test_esp_client.py` (redundant — superseded by
+  `svapna.body.expression`).
+- Fix `src/svapna/body/__main__.py` — `FIRMWARE_DIR` still points at
+  `firmware/esphome` (stale; should be `embodiment/firmware`). Build
+  and deploy via the body CLI will fail until fixed.
+- Remove or repurpose `embodiment/assets/README.md` placeholder.
 
-If P2.3 comes up before cleanup, do P2.3 first — cleanup is not
-blocking and the redundant files don't actively cause harm (they
-just duplicate what works).
+These don't block forward work and the redundant files don't actively
+cause harm — they just duplicate what works.
 
 ---
 
