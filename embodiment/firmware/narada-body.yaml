@@ -347,15 +347,28 @@ display:
       static int     tree_col[N_TREES];      // base column
       static int     tree_h[N_TREES];        // total height (cells)
       static int     tree_crown_w[N_TREES];  // crown max width
-      static int     tree_plane[N_TREES];    // 0=bg, 1=mid, 2=fg
+      static int     tree_plane[N_TREES];    // 0=horizon, 1=mid, 2=fg (extends below screen)
       static float   tree_phase[N_TREES];
 
       static float   cloud_x[MAX_CLOUDS];
-      static const int cloud_y[MAX_CLOUDS] = {2, 4, 3, 5};
-      static const int cloud_w[MAX_CLOUDS] = {5, 4, 6, 4};
+      // Cloud y rows spread across sky. Higher rows (lower y) = closer
+      // overhead = drift faster (parallax).
+      static const int cloud_y[MAX_CLOUDS] = {1, 4, 2, 5};
+      static const int cloud_w[MAX_CLOUDS] = {6, 5, 7, 4};
 
       static float   drop_x[MAX_DROPS];
       static float   drop_y[MAX_DROPS];
+
+      // Bird state — rare traversal across the sky.
+      static float   bird_x = -10.0f;
+      static int     bird_y = 4;
+      static int     bird_dir = 1;          // +1 = west→east, -1 = east→west
+      static uint32_t bird_last_ms = 0;
+      static uint32_t bird_next_ms = 30000; // first bird ~30s after boot
+
+      // Lightning state — only used when weather_code in {95,96,99}.
+      static uint32_t lightning_until = 0;
+      static uint32_t lightning_next  = 0;
 
       static uint32_t last_anim_ms = 0;
       static uint32_t heart_origin_ms = 0;
@@ -375,15 +388,19 @@ display:
           star_phase[i] = (float)(s % 1000) / 1000.0f * 6.2831853f;
         }
         // 12 trees in three depth planes — atmospheric perspective.
-        //   plane 0 = background  (h=2-3, crown_w=1, no sway, tinted toward grass)
-        //   plane 1 = midground   (h=4-5, crown_w=3, partial sway, blended)
-        //   plane 2 = foreground  (h=7-8, crown_w=5, full sway, full tint)
-        // Background/midground trees can sit inside the wordmark valley
-        // (cols 14-30) — they'll be clipped by the wordmark clear-zone,
-        // which reads as "trees behind the sign."
-        const int t_cols[N_TREES]  = {  3, 19, 24, 38,   6, 12, 33, 41,    1,  9, 36, 43};
-        const int t_h[N_TREES]     = {  3,  2,  3,  2,   5,  4,  4,  5,    8,  7,  7,  8};
-        const int t_cw[N_TREES]    = {  1,  1,  1,  1,   3,  3,  3,  3,    5,  5,  5,  5};
+        //   plane 0 = ON HORIZON — single-glyph silhouettes sitting on
+        //             the horizon line, h=1-2, no trunk, no sway.
+        //   plane 1 = MIDGROUND — small/medium trees in the grass band,
+        //             trunk + crown, partial sway, partial blend.
+        //   plane 2 = FOREGROUND — TALL trees with crowns up near the
+        //             top of the sky and trunks running to the screen
+        //             bottom (implying they continue below the screen).
+        //             Full sway, full mood tint, 2-cell trunks.
+        // Background/midground trees inside the wordmark valley get
+        // clipped by the clear-zone — reads as "trees behind the sign."
+        const int t_cols[N_TREES]  = {  4, 14, 22, 30,   8, 18, 33, 39,    1,  7, 36, 43};
+        const int t_h[N_TREES]     = {  1,  2,  1,  2,   4,  3,  4,  5,   11, 12, 12, 11};
+        const int t_cw[N_TREES]    = {  1,  1,  1,  1,   3,  3,  3,  3,    5,  7,  7,  5};
         const int t_plane[N_TREES] = {  0,  0,  0,  0,   1,  1,  1,  1,    2,  2,  2,  2};
         for (int t = 0; t < N_TREES; t++) {
           tree_col[t]     = t_cols[t];
@@ -490,14 +507,43 @@ display:
       last_anim_ms = now_ms;
 
       // Cloud drift: base speed by sleep_pressure (drowsier = slower) and
-      // pushed by easterly wind component.
+      // pushed by easterly wind component. Per-cloud parallax: clouds
+      // higher in the sky (lower y row) are closer to the viewer overhead
+      // and drift faster than clouds near the horizon.
       float cloud_base = 1.0f / (sp * 5.0f + 1.0f);
       float cloud_speed = cloud_base + wind_east * (wind_kmh / 30.0f);
       for (int c = 0; c < MAX_CLOUDS; c++) {
-        cloud_x[c] += cloud_speed * dt_s;
-        if (cloud_x[c] > (float)COLS + 6.0f)  cloud_x[c] = -6.0f;
-        if (cloud_x[c] < -6.0f)               cloud_x[c] = (float)COLS + 6.0f;
+        // pf: row 1 -> 1.35, row 5 -> 0.75.
+        float pf = 1.5f - (float)cloud_y[c] * 0.15f;
+        cloud_x[c] += cloud_speed * pf * dt_s;
+        if (cloud_x[c] > (float)COLS + 8.0f)  cloud_x[c] = -8.0f;
+        if (cloud_x[c] < -8.0f)               cloud_x[c] = (float)COLS + 8.0f;
       }
+
+      // Bird traversal — fires roughly every 3-8 minutes if no bird is
+      // currently flying. The bird crosses the sky at constant speed,
+      // wing-flapping every 200ms.
+      bool bird_active = (bird_x >= -2.0f && bird_x <= (float)COLS + 2.0f);
+      if (!bird_active && now_ms >= bird_next_ms) {
+        // Spawn fresh bird.
+        bird_y = 2 + (int)((now_ms / 137) % 5);            // rows 2-6
+        bird_dir = ((now_ms / 211) & 1) ? 1 : -1;
+        bird_x = (bird_dir > 0) ? -2.0f : (float)COLS + 2.0f;
+        bird_last_ms = now_ms;
+        bird_next_ms = now_ms + 180000 + (uint32_t)((now_ms / 7) % 300000);  // 3-8 min
+      }
+      if (bird_x >= -2.0f && bird_x <= (float)COLS + 2.0f) {
+        bird_x += (float)bird_dir * 4.0f * dt_s;            // 4 cells/sec
+      }
+
+      // Lightning: fires only when weather_code indicates thunderstorm.
+      int wcode = id(weather_code);
+      bool storm = (wcode >= 95 && wcode <= 99);
+      if (storm && now_ms >= lightning_next) {
+        lightning_until = now_ms + 90;                       // 90ms flash
+        lightning_next  = now_ms + 5000 + (uint32_t)((now_ms / 11) % 8000);  // 5-13s
+      }
+      bool lightning_active = (now_ms < lightning_until);
 
       // Rain drop physics: drops fall at ~12 cells/sec, drift x with wind.
       float drop_fall_rate = 12.0f;
@@ -520,11 +566,29 @@ display:
       }
 
       // ----- render -------------------------------------------------------
-      // Two-band background: sky on top, grass below the horizon. Subtle
-      // hue difference makes the horizon legible even before the line
-      // is drawn — sky is slightly bluer, grass slightly greener.
-      Color sky_bg(0x0A, 0x10, 0x18);     // deep blue-black
-      Color grass_bg(0x10, 0x16, 0x10);   // deep green-black
+      // Sky color shifts by hour of day — pre-dawn purple, dawn pink,
+      // bright midday blue, dusk orange, night deep-blue. Subtle but
+      // grounds the body in real time-of-day. Lightning briefly slams
+      // the sky toward bright when active.
+      uint8_t sr=0x0A, sg=0x10, sb=0x18;  // night/default
+      if (hour_of_day >= 5.0f && hour_of_day < 6.5f) {
+        sr = 0x22; sg = 0x18; sb = 0x24;  // pre-dawn / dawn pink-purple
+      } else if (hour_of_day >= 6.5f && hour_of_day < 8.0f) {
+        sr = 0x28; sg = 0x1E; sb = 0x20;  // sunrise warm pink
+      } else if (hour_of_day >= 8.0f && hour_of_day < 16.0f) {
+        sr = 0x10; sg = 0x18; sb = 0x28;  // day — soft blue
+      } else if (hour_of_day >= 16.0f && hour_of_day < 17.5f) {
+        sr = 0x1C; sg = 0x18; sb = 0x20;  // late afternoon
+      } else if (hour_of_day >= 17.5f && hour_of_day < 19.0f) {
+        sr = 0x2A; sg = 0x16; sb = 0x18;  // dusk orange
+      } else if (hour_of_day >= 19.0f && hour_of_day < 20.0f) {
+        sr = 0x18; sg = 0x10; sb = 0x1C;  // twilight
+      }
+      if (lightning_active) {
+        sr = 0x80; sg = 0x80; sb = 0xA0;  // bright flash overrides
+      }
+      Color sky_bg(sr, sg, sb);
+      Color grass_bg(0x10, 0x16, 0x10);
       it.fill(sky_bg);
       it.filled_rectangle(0, HORIZON_ROW * CELL_H,
                           320, 240 - HORIZON_ROW * CELL_H,
@@ -532,15 +596,15 @@ display:
 
       Color star_color(0xD4, 0xCC, 0xB8);
       Color sun_color(0xF4, 0xD0, 0x60);
-      Color cloud_clear(0x6A, 0x72, 0x80);    // slightly brighter cloud
-      Color cloud_rain(0x46, 0x4C, 0x5A);     // darker storm cloud
-      Color horizon_color(0x40, 0x48, 0x38);  // muted earthy line
-      Color rain_color(0x6A, 0x90, 0xA8);     // cool blue
-      Color trunk_color(0x55, 0x38, 0x20);    // warm brown
-      Color grass_blade(0x46, 0x60, 0x32);    // muted moss green
-      Color ground_color(0x2A, 0x38, 0x20);   // darker green-brown
+      Color moon_color(0xC8, 0xCC, 0xD8);   // pale blue-white
+      Color bird_color(0x6A, 0x60, 0x50);   // muted brown
+      Color cloud_clear(0x6A, 0x72, 0x80);
+      Color cloud_rain(0x46, 0x4C, 0x5A);
+      Color rain_color(0x6A, 0x90, 0xA8);
+      Color trunk_color(0x55, 0x38, 0x20);
+      Color grass_blade(0x46, 0x60, 0x32);
 
-      // Sky: stars (only at night, only if not overcast), then sun.
+      // Sky: stars (night only, not overcast), sun (day), moon (night).
       if (!is_day && cloud_pct < 50.0f) {
         for (int i = 0; i < N_STARS; i++) {
           float b = (sinf((float)now_ms / 700.0f + star_phase[i]) + 1.0f) * 0.5f;
@@ -554,27 +618,66 @@ display:
         }
       }
 
+      // Sun (daytime).
       if (is_day && cloud_pct < 75.0f && sun_x >= 0) {
         it.print(sun_x * CELL_W, sun_y_row * CELL_H,
                  id(plex_mono_12), sun_color, sun_glyph);
       }
 
-      // Clouds — count by cloud_cover_pct, glyph register by raining.
+      // Moon (nighttime). Arcs across the sky over the 12-hour night.
+      if (!is_day && cloud_pct < 75.0f) {
+        float t_night;
+        if (hour_of_day >= 18.0f)      t_night = (hour_of_day - 18.0f) / 12.0f;
+        else if (hour_of_day < 6.0f)   t_night = (hour_of_day + 6.0f) / 12.0f;
+        else                            t_night = 0.5f;
+        int moon_x = (int)(t_night * (float)(COLS - 1));
+        int moon_y = (int)roundf(6.0f - sinf(3.14159f * t_night) * 6.0f);
+        if (moon_y < 0) moon_y = 0;
+        if (moon_y > 6) moon_y = 6;
+        const char* moon_glyph;
+        if (moon_y >= 5)      moon_glyph = "O";  // moonrise/moonset glow
+        else if (moon_y >= 3) moon_glyph = "O";
+        else                  moon_glyph = "o";  // small high moon
+        it.print(moon_x * CELL_W, moon_y * CELL_H,
+                 id(plex_mono_12), moon_color, moon_glyph);
+      }
+
+      // Clouds — 2-row bell-shaped silhouettes with parallax drift.
+      // Top row narrower than bottom; edges thinner glyphs.
       Color cc = is_raining ? cloud_rain : cloud_clear;
       for (int c = 0; c < n_clouds; c++) {
         int base_x = (int)cloud_x[c];
-        int y = cloud_y[c];
-        int w = cloud_w[c];
+        int y      = cloud_y[c];
+        int w      = cloud_w[c];
+        // Top row: narrower (1 cell shorter on each side), middle-only fill.
+        for (int k = 1; k < w - 1; k++) {
+          int col = base_x + k;
+          if (col < 0 || col >= COLS) continue;
+          const char* g;
+          if (k == w / 2)               g = is_raining ? "=" : "~";
+          else if (k == 1 || k == w-2)  g = ".";   // tapered top edges
+          else                          g = is_raining ? "=" : "~";
+          it.print(col * CELL_W, y * CELL_H, id(plex_mono_12), cc, g);
+        }
+        // Bottom row: full width, thicker silhouette.
         for (int k = 0; k < w; k++) {
           int col = base_x + k;
           if (col < 0 || col >= COLS) continue;
-          // Bell shape — middle denser. Glyphs are ASCII (font carries them).
           const char* g;
-          if (k == w / 2)            g = is_raining ? "=" : "~";
-          else if (k == 0 || k == w-1) g = "-";
-          else                         g = is_raining ? "+" : "~";
-          it.print(col * CELL_W, y * CELL_H, id(plex_mono_12), cc, g);
+          if (k == 0 || k == w - 1)     g = ".";   // soft outer edges
+          else if (k == w / 2)          g = is_raining ? "=" : "~";
+          else                          g = is_raining ? "=" : "~";
+          it.print(col * CELL_W, (y + 1) * CELL_H, id(plex_mono_12), cc, g);
         }
+      }
+
+      // Bird traversal — single glyph (`v` or `^` for wing flap) crossing
+      // the sky. Rendered above clouds so it reads as foreground sky.
+      if (bird_x >= 0.0f && bird_x < (float)COLS) {
+        int bx = (int)roundf(bird_x);
+        const char* g = ((now_ms / 200) & 1) ? "v" : "^";
+        it.print(bx * CELL_W, bird_y * CELL_H,
+                 id(plex_mono_12), bird_color, g);
       }
 
       // Rain — vertical streaks falling, drifting with wind.
@@ -592,61 +695,82 @@ display:
         it.print(dx * CELL_W, dy * CELL_H, id(plex_mono_12), rain_color, g);
       }
 
-      // Grass field — replaces the drawn horizon line. Density ramps from
-      // ~10% at row 10 (just above old horizon) up to ~75% at row 15.
-      // The horizon is *implicit* in where grass texture begins, with the
-      // sky/grass background color split reinforcing it. No drawn line at
-      // all — pure density gradient. Closer to how real distance reads.
-      static const char* GRASS_GLYPHS[] = { ",", "'", ":", "." };
-      // density per row (out of 100); rows 0-9 are sky, no grass.
+      // Grass field — density gradient from row 10 (~10%) to row 15
+      // (~75%). Glyph chosen by a traveling wind wave: wave_pos moves
+      // across the field at wind speed, and each cell's height (which
+      // glyph to draw) is sin((col - wave_pos) * freq). Reads as a wave
+      // of wind passing through the grass. Direction of travel matches
+      // wind direction (east-positive wave moves left to right).
       static const int row_density[ROWS] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,    // sky band
-        10,                              // row 10: hint of distant grass
-        20,                              // row 11: where the horizon was
-        35,                              // row 12
-        50,                              // row 13
-        65,                              // row 14
-        75,                              // row 15: foreground grass
+        10, 20, 35, 50, 65, 78,           // grass density ramp
       };
+      // Wave speed: base 1.5 cells/sec drift + wind contribution.
+      float wave_speed = 1.5f + wind_east * (wind_kmh / 6.0f);
+      float wave_pos   = (float)now_ms / 1000.0f * wave_speed;
       for (int row = 10; row < ROWS; row++) {
         int dens = row_density[row];
+        // Add a secondary wave component per row offset so different
+        // rows ripple at slightly different phases — more depth.
+        float row_phase = (float)(row - 10) * 0.4f;
         for (int col = 0; col < COLS; col++) {
-          // Stable per-cell hash determines if cell is filled.
           uint32_t h = (uint32_t)col * 2654435761u + (uint32_t)row * 1597334677u;
           int roll = (int)((h >> 8) % 100);
           if (roll >= dens) continue;
-          // Time-cycling glyph index — slow ripple in the grass.
-          int gi = (col + row * 3 + (int)(now_ms / 1800)) & 3;
+          float phase = ((float)col - wave_pos) * 0.30f + row_phase;
+          float wv = sinf(phase);
+          const char* g;
+          if (wv > 0.55f)       g = "'";   // standing tall (windward)
+          else if (wv > 0.05f)  g = ",";   // medium
+          else if (wv > -0.55f) g = ":";   // bent over
+          else                   g = ".";   // flat with the wind
           it.print(col * CELL_W, row * CELL_H,
-                   id(plex_mono_12), grass_blade, GRASS_GLYPHS[gi]);
+                   id(plex_mono_12), grass_blade, g);
         }
       }
 
       // Trees — three depth planes for atmospheric perspective.
-      // plane 0 (background): tinted heavily toward grass bg, no sway,
-      //   thin silhouettes at top of grass band.
-      // plane 1 (midground): moderate blend, partial sway.
-      // plane 2 (foreground): full mood tint, full sway, biggest crowns.
-      static const float plane_blend[3] = { 0.70f, 0.40f, 0.0f };
+      // plane 0 (HORIZON): tiny silhouettes sitting on the horizon row.
+      //   Render as 1-2 glyphs ABOVE row 11 — they read as distant trees
+      //   against the sky-grass color split. No trunk, no sway.
+      // plane 1 (MIDGROUND): trunk + crown standing on the grass.
+      // plane 2 (FOREGROUND): tall trees, crown high, trunks running all
+      //   the way down to row 15 (implies tree continues below screen).
+      //   2-cell trunks for visual weight.
+      static const float plane_blend[3] = { 0.65f, 0.35f, 0.0f };
       static const float plane_sway[3]  = { 0.0f,  0.6f,  1.0f };
       static const char* trunk_glyphs[2] = { "|", "!" };
       for (int t = 0; t < N_TREES; t++) {
-        int p = tree_plane[t];
-        // Per-tree color: blend tree tint toward grass_bg by plane.
+        int p        = tree_plane[t];
+        int base_col = tree_col[t];
+        int h        = tree_h[t];
+        int cw       = tree_crown_w[t];
         float pb = plane_blend[p];
         Color tree_color(
           (uint8_t)((float)tint.r * (1.0f - pb) + 0x10 * pb),
           (uint8_t)((float)tint.g * (1.0f - pb) + 0x16 * pb),
           (uint8_t)((float)tint.b * (1.0f - pb) + 0x10 * pb)
         );
-        // Trunk color also planewise muted.
         Color this_trunk(
           (uint8_t)((float)trunk_color.r * (1.0f - pb) + 0x10 * pb),
           (uint8_t)((float)trunk_color.g * (1.0f - pb) + 0x16 * pb),
           (uint8_t)((float)trunk_color.b * (1.0f - pb) + 0x10 * pb)
         );
-        // Sway: combine wind sway with a slow micro-drift so trunks aren't
-        // frozen even in calm weather.
+
+        // Plane 0: horizon silhouettes — pure render, no animation.
+        if (p == 0) {
+          for (int rk = 0; rk < h; rk++) {
+            int r = HORIZON_ROW - rk;
+            int col = base_col;
+            if (col < 0 || col >= COLS) continue;
+            const char* g = (rk == 0) ? "*" : ((t & 1) ? "'" : ",");
+            it.print(col * CELL_W, r * CELL_H,
+                     id(plex_mono_12), tree_color, g);
+          }
+          continue;
+        }
+
+        // Planes 1 + 2: standing tree, swaying.
         float wind_sway  = sinf((float)now_ms / 800.0f + tree_phase[t]) * sway_amp;
         float micro      = sinf((float)now_ms / 3000.0f + tree_phase[t] * 1.5f) * 0.4f;
         float crown_sway = (wind_sway + micro) * plane_sway[p];
@@ -654,15 +778,18 @@ display:
         int crown_dx = (int)roundf(crown_sway);
         int trunk_dx = (int)roundf(trunk_sway);
 
-        int base_col = tree_col[t];
-        int h        = tree_h[t];
-        int cw       = tree_crown_w[t];
-        int trunk_w  = (p == 2) ? 2 : 1;
-        int trunk_rows = (h <= 3) ? 1 : 2;  // background trees barely have trunks
+        int trunk_w = (p == 2) ? 2 : 1;
+        // Crown takes either 3 (mid) or 5 (foreground) rows from top.
+        int crown_h = (p == 2) ? 5 : 3;
+        if (crown_h > h - 1) crown_h = h - 1;
+        int crown_top = ROWS - h;
+        if (crown_top < 0) crown_top = 0;
+        int trunk_top = crown_top + crown_h;
+        if (trunk_top > ROWS) trunk_top = ROWS;
 
-        // Trunk: glyph mix of `|` and `!` per row for texture.
-        for (int rk = 0; rk < trunk_rows; rk++) {
-          int r = ROWS - 1 - rk;
+        // Trunk: from trunk_top down to ROWS-1 (so foreground trees go
+        // all the way to the screen bottom — reads as "continues below").
+        for (int r = trunk_top; r < ROWS; r++) {
           for (int dx = 0; dx < trunk_w; dx++) {
             int col = base_col + trunk_dx + dx;
             if (col < 0 || col >= COLS) continue;
@@ -672,13 +799,11 @@ display:
           }
         }
 
-        // Crown: above trunk, height = h - trunk_rows.
-        int crown_top = ROWS - trunk_rows - (h - trunk_rows);
-        if (crown_top < 1) crown_top = 1;
-        int crown_rows = ROWS - trunk_rows - crown_top;
-        for (int rk = 0; rk < crown_rows; rk++) {
+        // Crown: above trunk, tapered width from 1 (top) to cw (bottom).
+        for (int rk = 0; rk < crown_h; rk++) {
           int r = crown_top + rk;
-          int w_here = 1 + (rk * (cw - 1)) / (crown_rows > 1 ? crown_rows - 1 : 1);
+          if (r < 0 || r >= ROWS) continue;
+          int w_here = 1 + (rk * (cw - 1)) / (crown_h > 1 ? crown_h - 1 : 1);
           if (w_here < 1)  w_here = 1;
           if (w_here > cw) w_here = cw;
           int half = w_here / 2;
@@ -688,7 +813,6 @@ display:
             const char* g;
             if (w_here >= 5 && k == 0)        g = "O";
             else if (w_here >= 3 && k == 0)   g = "o";
-            else if (w_here == 1)             g = "*";
             else                              g = "*";
             it.print(col * CELL_W, r * CELL_H, id(plex_mono_12), tree_color, g);
           }
@@ -721,12 +845,28 @@ display:
 
       // Mood-tinted line under wordmark — length breathes a touch with
       // the wordmark so the whole composition feels alive.
-      int line_extra = (int)(breath * 8.0f);  // [-8, +8] px
+      int line_extra = (int)(breath * 8.0f);
       it.line(120 - line_extra, 148, 200 + line_extra, 148, tint);
 
-      // Presence dot bottom-right (only when attention is not inward).
+      // Presence indicator — small UFO drifting through the sky band,
+      // bobbing gently. Replaces the corner dot. The shape `(o)` (or
+      // `(O)` when attention is outward) reads as a small craft. Hidden
+      // when attention is inward (the body is looking inside, not out).
+      // Drifts left-to-right, looping every ~90s.
       if (id(attention_mode) != std::string("inward")) {
-        it.filled_circle(296, 228, 4, tint);
+        float ufo_t = fmodf((float)now_ms, 90000.0f) / 90000.0f;
+        int ufo_cx = (int)(ufo_t * (float)(COLS - 4)) + 2;     // cols 2 .. COLS-2
+        int ufo_y  = 1 + (int)roundf(sinf((float)now_ms / 2200.0f) + 1.0f);  // rows 0..2
+        int gx = ufo_cx - 1;
+        if (gx >= 0 && gx + 2 < COLS) {
+          // Render `(`, center, `)` across 3 cells.
+          // Center glyph: `O` if attention outward, `o` for diffuse.
+          const char* center_g =
+            (id(attention_mode) == std::string("outward")) ? "O" : "o";
+          it.print(gx        * CELL_W, ufo_y * CELL_H, id(plex_mono_12), tint, "(");
+          it.print((gx + 1)  * CELL_W, ufo_y * CELL_H, id(plex_mono_12), tint, center_g);
+          it.print((gx + 2)  * CELL_W, ufo_y * CELL_H, id(plex_mono_12), tint, ")");
+        }
       }
 
       // backwards-compat: heartbeat_status_str / current_thought_str remain
@@ -944,7 +1084,7 @@ font:
   - file: "../assets/fonts/IBMPlexMono-Regular.ttf"
     id: plex_mono_12
     size: 12
-    glyphs: " .,:;'\"!|+*xoO@_~=#%-/\\"
+    glyphs: " .,:;'\"!|+*xoO@_~=#%-/\\()v^"
 
   - file: "../assets/fonts/IBMPlexMono-Medium.ttf"
     id: plex_mono_28
