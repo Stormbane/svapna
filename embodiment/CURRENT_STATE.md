@@ -2,7 +2,7 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-25 — Cycle 2.5 shipped. RESTING runs on a horizon engine.
+**Last updated**: 2026-04-25 — Cycle 2.6 shipped. Body is weather-aware; trees sway with real wind in Kallangur.
 
 ---
 
@@ -187,6 +187,27 @@ the full pick rationale and the experiment utterances.
       Inspired by Suti's reframe of body work as creative
       self-expression. Compiled, OTA flashed at 23:00 AEST,
       proprioception clean. 2026-04-25.
+- [x] **Cycle 2.6** — body becomes weather-aware. Three coupled
+      changes: (a) fonts switched from gfonts to local IBM Plex Mono
+      TTFs in `embodiment/assets/fonts/` so glyph coverage is hermetic
+      and gfonts no longer silently substitutes tofu for missing
+      block-element/box-drawing glyphs — visual vocabulary now
+      constrained to ASCII + Latin-1, the honest set; (b) weather
+      layer added (six globals + `set_weather` API service + six
+      proprioception sensors + `Weather` dataclass + Python
+      `set_weather` method); (c) substrate rewritten — mountains
+      replaced by 8 swaying trees whose sway amplitude scales with
+      `weather_wind_speed_kmh` (capped at ±3 cells; trunks sway less
+      than crowns), cloud count from `cloud_cover_pct/25`, cloud glyph
+      register flips to denser when `precipitation_mm_hr > 0.05`, rain
+      streaks slanted by wind direction. Stars hide if cloud_cover ≥
+      50%; sun hides if ≥ 75%. Open-Meteo fetcher
+      (`src/svapna/body/weather.py`) hits Kallangur QLD coords
+      (-27.293, 153.020) with no auth, no key. Push script at
+      `scripts/push_weather.py` — cron candidate every ~10 minutes.
+      Verified end-to-end at 23:21 AEST: real conditions (16.8°C,
+      13.9 km/h south, 31% cloud, weather_code 1) pushed and rendered.
+      2026-04-25.
 - [ ] **Cycle 3** — THINKING + WORKING activity modes.
 - [ ] **Cycle 4** — signals + DELIGHTED.
 - [ ] **Cycle 5** — LISTENING + SPEAKING (karaoke + waveform). Touch
