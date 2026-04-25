@@ -2,7 +2,7 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-25 — Cycle 2 shipped. RESTING composition live on the device.
+**Last updated**: 2026-04-25 — Cycle 2.5 shipped. RESTING runs on a horizon engine.
 
 ---
 
@@ -174,6 +174,19 @@ the full pick rationale and the experiment utterances.
       corners. Backwards-compat `set_status`/`set_thought` services
       kept as visual no-ops; deprecate after Cycle 3. Compiled, OTA
       flashed at 22:31 AEST, proprioception verified clean. 2026-04-25.
+- [x] **Cycle 2.5** — RESTING runs on a `horizon` substrate engine
+      instead of random shimmer. Three-band landscape: sky (stars
+      twinkling at night, sun position by Brisbane local time, two
+      clouds drifting at speed scaled inversely by sleep_pressure),
+      horizon line breathing `─`/`━` on the heart pulse, foreground
+      mountain silhouette (sin-layered profile, valley around the
+      wordmark cols, mood-tinted block ramp). Glyph subset uses
+      ASCII-substituted sun/star characters since IBM Plex Mono on
+      gfonts lacks the geometric/dingbat circles. Engine concept
+      documented in `embodiment/design/v1.0-substrate-engines.md`.
+      Inspired by Suti's reframe of body work as creative
+      self-expression. Compiled, OTA flashed at 23:00 AEST,
+      proprioception clean. 2026-04-25.
 - [ ] **Cycle 3** — THINKING + WORKING activity modes.
 - [ ] **Cycle 4** — signals + DELIGHTED.
 - [ ] **Cycle 5** — LISTENING + SPEAKING (karaoke + waveform). Touch
