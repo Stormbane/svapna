@@ -271,35 +271,175 @@ display:
     invert_colors: false
     update_interval: 100ms
     lambda: |-
-      // CYCLE 1 — display lambda unchanged.
-      // The v1.0 layer state is being written to globals but not yet rendered.
-      // Cycle 2 introduces the glyph-field substrate that consumes those globals.
-      it.fill(Color(0, 0, 0));
+      // ===================================================================
+      // CYCLE 2 — v1.0 RESTING composition.
+      // Substrate: full-screen breathing glyph field driven by vitality+mood.
+      // Activity overlay: NARADA wordmark + thin mood-tinted line.
+      // Presence dot bottom-right when attention != inward.
+      // Heart pulse stretched by sleep_pressure. Idle micro-sparkle ~30s.
+      // See embodiment/design/v1.0-{architecture,vocabulary,compositions}.md
+      // ===================================================================
 
-      // Title - warm gold
-      it.printf(160, 15, id(title_font), Color(200, 170, 100), TextAlign::TOP_CENTER,
-        "NARADA");
+      static const int COLS = 44;
+      static const int ROWS = 16;
+      static const int CELL_W = 7;
+      static const int CELL_H = 14;
+      static const int N_CELLS = COLS * ROWS;
+      static const int RAMP_LEN = 14;
+      // Standard ramp: SPACE . ' , : ; ! | + * x % # @
+      static const char* RAMP[] = {
+        " ", ".", "'", ",", ":", ";", "!", "|", "+", "*", "x", "%", "#", "@"
+      };
 
-      // Status
-      it.printf(160, 55, id(body_font), Color(140, 140, 140), TextAlign::TOP_CENTER,
-        "%s", id(heartbeat_status_str).c_str());
+      static uint8_t cell_ramp[44 * 16];
+      static uint32_t last_drift_ms = 0;
+      static uint32_t last_sparkle_ms = 0;
+      static int     sparkle_cell = -1;
+      static uint32_t sparkle_until = 0;
+      static uint32_t heart_origin_ms = 0;
+      static bool     initialized = false;
+      static uint32_t drift_rng  = 0xdeadbeefu;
+      static uint32_t spark_rng  = 0xcafef00du;
 
-      // Current thought
-      it.printf(10, 90, id(body_font), Color(160, 170, 200), TextAlign::TOP_LEFT,
-        "%s", id(current_thought_str).c_str());
+      uint32_t now_ms = millis();
 
-      // Time
-      auto time = id(sntp_time).now();
-      if (time.is_valid()) {
-        it.strftime(160, 215, id(small_font), Color(90, 90, 90), TextAlign::TOP_CENTER,
-          "%H:%M  %d %b", time);
+      if (!initialized) {
+        // Seed cells with deterministic xorshift noise — distribution biased
+        // around mid-density so RESTING starts comfortably alive.
+        uint32_t s = 1234567u;
+        for (int i = 0; i < N_CELLS; i++) {
+          s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+          cell_ramp[i] = (uint8_t)(s % 7);  // 0..6
+        }
+        last_drift_ms   = now_ms;
+        last_sparkle_ms = now_ms;
+        heart_origin_ms = now_ms;
+        initialized = true;
       }
 
-      // Heartbeat pulse - red heart, ~2 second cycle at 100ms update
-      static int pulse = 0;
-      pulse = (pulse + 1) % 20;
-      int brightness = (pulse < 10) ? (pulse * 25) : ((20 - pulse) * 25);
-      it.printf(290, 5, id(heart_font), Color(brightness, 0, 0), "\U000F02D1");
+      // ----- heart period from sleep_pressure ---------------------------
+      // Anchors: 0.0 -> 1.2s, 0.3 -> 2.0s, 0.5 -> 3.5s, 0.85+ -> 5.0s
+      float sp = id(vitality_sleep_pressure);
+      float period_ms;
+      if (sp <= 0.3f) {
+        float t = sp / 0.3f;
+        period_ms = 1200.0f + t * (2000.0f - 1200.0f);
+      } else if (sp <= 0.5f) {
+        float t = (sp - 0.3f) / 0.2f;
+        period_ms = 2000.0f + t * (3500.0f - 2000.0f);
+      } else if (sp <= 0.85f) {
+        float t = (sp - 0.5f) / 0.35f;
+        period_ms = 3500.0f + t * (5000.0f - 3500.0f);
+      } else {
+        period_ms = 5000.0f;
+      }
+      float phase = fmodf((float)(now_ms - heart_origin_ms), period_ms)
+                    / period_ms * 6.2831853f;
+      // roundf(sinf) -> -1, 0, +1 with thump-thump distribution.
+      int pulse_offset = (int)roundf(sinf(phase));
+
+      // ----- per-cell drift: 600ms/cell baseline, scaled by restlessness --
+      float restless = id(vitality_restlessness);
+      float drift_period_ms = 600.0f / (1.0f + restless);
+      uint32_t drift_dt = now_ms - last_drift_ms;
+      int updates_this_frame = (int)((float)N_CELLS *
+                                      (float)drift_dt / drift_period_ms);
+      if (updates_this_frame > 80) updates_this_frame = 80;  // perf cap
+      if (updates_this_frame > 0) {
+        last_drift_ms = now_ms;
+        for (int k = 0; k < updates_this_frame; k++) {
+          drift_rng ^= drift_rng << 13;
+          drift_rng ^= drift_rng >> 17;
+          drift_rng ^= drift_rng << 5;
+          int idx = (int)(drift_rng % N_CELLS);
+          int delta = ((drift_rng >> 16) & 1) ? 1 : -1;
+          int v = (int)cell_ramp[idx] + delta;
+          if (v < 0) v = 0;
+          if (v > 6) v = 6;
+          cell_ramp[idx] = (uint8_t)v;
+        }
+      }
+
+      // ----- idle micro-sparkle: every ~30s, one cell jumps to @, decays --
+      if (sparkle_cell < 0 && (now_ms - last_sparkle_ms) >= 30000) {
+        spark_rng ^= spark_rng << 13;
+        spark_rng ^= spark_rng >> 17;
+        spark_rng ^= spark_rng << 5;
+        sparkle_cell    = (int)(spark_rng % N_CELLS);
+        sparkle_until   = now_ms + 2000;
+        last_sparkle_ms = now_ms;
+      }
+      if (sparkle_cell >= 0 && now_ms >= sparkle_until) {
+        sparkle_cell = -1;
+      }
+
+      // ----- mood tint: bilinear blend of 4 corner colors -----------------
+      // (low-val low-aro)=GREY-TEAL, (high-val low-aro)=GOLD,
+      // (low-val high-aro)=ROSE,    (high-val high-aro)=VIOLET.
+      float v_norm = (id(mood_valence) + 1.0f) * 0.5f;  // [0,1]
+      float a_norm = id(mood_arousal);                  // [0,1]
+      auto blend = [&](float c00, float c10, float c01, float c11) -> uint8_t {
+        float r = (1.0f - v_norm) * (1.0f - a_norm) * c00
+                + v_norm           * (1.0f - a_norm) * c10
+                + (1.0f - v_norm) * a_norm           * c01
+                + v_norm           * a_norm           * c11;
+        if (r < 0.0f)   r = 0.0f;
+        if (r > 255.0f) r = 255.0f;
+        return (uint8_t)r;
+      };
+      Color tint(
+        blend(0x4A, 0xC4, 0xB0, 0x7A),
+        blend(0x55, 0x96, 0x40, 0x50),
+        blend(0x60, 0x2A, 0x60, 0x8C)
+      );
+
+      // ----- render --------------------------------------------------------
+      it.fill(Color(0x0D, 0x0F, 0x1A));  // background
+
+      Color substrate_color(0x4A, 0x4A, 0x40);  // text dim — neutral substrate
+      Color sparkle_color(0xD4, 0xCC, 0xB8);    // text bright — sparkle accent
+      for (int row = 0; row < ROWS; row++) {
+        for (int col = 0; col < COLS; col++) {
+          int idx = row * COLS + col;
+          int v = (int)cell_ramp[idx] + pulse_offset;
+          if (v < 0) v = 0;
+          if (v > RAMP_LEN - 1) v = RAMP_LEN - 1;
+          bool is_sparkle = (sparkle_cell == idx && now_ms < sparkle_until);
+          if (is_sparkle) {
+            // 2s decay from @ (13) down toward substrate.
+            uint32_t age = now_ms - (sparkle_until - 2000);
+            int sv = 13 - (int)(age * 13 / 2000);
+            if (sv < 0) sv = 0;
+            v = sv;
+          }
+          if (v == 0) continue;
+          int x = col * CELL_W;
+          int y = row * CELL_H;
+          it.print(x, y, id(plex_mono_12),
+                   is_sparkle ? sparkle_color : substrate_color,
+                   RAMP[v]);
+        }
+      }
+
+      // ----- clear-zone for wordmark + line (overdraw, not overlay) -------
+      it.filled_rectangle(76, 86, 168, 74, Color(0x0D, 0x0F, 0x1A));
+
+      // ----- NARADA wordmark — text-bright, centered (160, 112) -----------
+      it.print(160, 112, id(plex_mono_28), Color(0xD4, 0xCC, 0xB8),
+               TextAlign::CENTER, "NARADA");
+
+      // ----- thin mood-tinted line under wordmark, 80px wide --------------
+      it.line(120, 148, 200, 148, tint);
+
+      // ----- presence dot bottom-right (296, 228), mood-tinted ------------
+      // Visible whenever attention is not inward (RESTING default = diffuse).
+      if (id(attention_mode) != std::string("inward")) {
+        it.filled_circle(296, 228, 4, tint);
+      }
+
+      // backwards-compat: heartbeat_status_str / current_thought_str remain
+      // updated by the daemon but are intentionally not rendered. Services
+      // are visual no-ops; the globals will be removed after Cycle 2 verifies.
 
 text_sensor:
   - platform: wifi_info
@@ -450,27 +590,22 @@ text_sensor:
       return std::string(buf);
 
 font:
+  # Substrate glyph field — IBM Plex Mono Regular at 12px.
+  # Glyph subset = standard density ramp from v1.0-vocabulary.md.
   - file:
       type: gfonts
-      family: "Rajdhani"
-      weight: 600
-    id: title_font
-    size: 28
-
-  - file:
-      type: gfonts
-      family: "Share Tech Mono"
-    id: body_font
-    size: 16
-
-  - file:
-      type: gfonts
-      family: "Share Tech Mono"
-    id: small_font
+      family: "IBM Plex Mono"
+      weight: 400
+    id: plex_mono_12
     size: 12
+    glyphs: " .'\",;:!|+*x%#@"
 
-  - file: "https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf"
-    id: heart_font
-    size: 24
-    glyphs:
-      - "\U000F02D1"  # mdi-heart
+  # Wordmark — IBM Plex Mono Medium at 28px. NARADA is the only string drawn
+  # at this size in Cycle 2; restrict glyph set to keep flash small.
+  - file:
+      type: gfonts
+      family: "IBM Plex Mono"
+      weight: 500
+    id: plex_mono_28
+    size: 28
+    glyphs: "ADNR"
