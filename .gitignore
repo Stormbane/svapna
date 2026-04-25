@@ -92,5 +92,6 @@ embodiment/xiaozhi-esp-box-3/
 embodiment/xiaozhi-esp-box-3.zip
 embodiment/firmware/.esphome/
 
-# Render previews
-preview*.png
+# Ad-hoc render previews at project root (the curated gallery in
+# embodiment/previews/ IS committed).
+/preview*.png
