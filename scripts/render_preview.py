@@ -168,38 +168,28 @@ def render(state: State) -> Image.Image:
             if g:
                 put(sx, sy, (0xD4, 0xCC, 0xB8), g)
 
-    def render_celestial(cx, cy, body_col, glyph, pulse_period_ms, radius):
+    def render_celestial(cx, cy, body_col, pulse_period_ms, body_r):
         if cx < 0 or cy < 0:
             return
-        glow_t = (math.sin(now_ms / pulse_period_ms) + 1.0) * 0.5
-        k = 0.3 + glow_t * 0.5
-        halo = (
-            int(body_col[0] * k),
-            int(body_col[1] * k),
-            int(body_col[2] * k),
-        )
-        # Filled body circle.
-        bx = cx * CELL_W + CELL_W // 2
-        by = cy * CELL_H + CELL_H // 2
-        draw.ellipse((bx - radius, by - radius, bx + radius, by + radius), fill=halo)
-        # Halo dots in 8 surrounding cells.
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                if dx == 0 and dy == 0:
-                    continue
-                gx = cx + dx
-                gy = cy + dy
-                if gx < 0 or gx >= COLS:
-                    continue
-                if gy < 0 or gy >= HORIZON_ROW:
-                    continue
-                put(gx, gy, halo, ".")
-        # Body glyph on top.
-        put(cx, cy, body_col, glyph)
+        px = cx * CELL_W + CELL_W // 2
+        py = cy * CELL_H + CELL_H // 2
+        pulse = (math.sin(now_ms / pulse_period_ms) + 1.0) * 0.5
+        # Outer glow
+        outer_r = int(body_r * (2.6 + pulse * 0.8))
+        outer = tuple(int(c * (0.10 + pulse * 0.10)) for c in body_col)
+        draw.ellipse((px - outer_r, py - outer_r, px + outer_r, py + outer_r),
+                     fill=outer)
+        # Mid glow
+        mid_r = int(body_r * (1.6 + pulse * 0.3))
+        mid = tuple(int(c * (0.30 + pulse * 0.20)) for c in body_col)
+        draw.ellipse((px - mid_r, py - mid_r, px + mid_r, py + mid_r), fill=mid)
+        # Sharp body
+        draw.ellipse((px - body_r, py - body_r, px + body_r, py + body_r),
+                     fill=body_col)
 
     # Sun.
     if is_day and state.cloud_pct < 75.0 and sun_x >= 0:
-        render_celestial(sun_x, sun_y, (0xF4, 0xD0, 0x60), sun_glyph, 1500.0, 6)
+        render_celestial(sun_x, sun_y, (0xF4, 0xD0, 0x60), 1500.0, 5)
 
     # Moon at night (12-hour arc opposite sun).
     if (not is_day) and state.cloud_pct < 75.0:
@@ -212,8 +202,7 @@ def render(state: State) -> Image.Image:
         moon_x = int(t_night * (COLS - 1))
         moon_y = int(round(6.0 - math.sin(math.pi * t_night) * 6.0))
         moon_y = _clamp(moon_y, 0, 6)
-        moon_glyph = "O" if moon_y >= 3 else "o"
-        render_celestial(moon_x, moon_y, (0xC8, 0xCC, 0xD8), moon_glyph, 2400.0, 5)
+        render_celestial(moon_x, moon_y, (0xC8, 0xCC, 0xD8), 2400.0, 4)
 
     # Clouds — wispy multi-line shapes.
     is_raining = state.precip > 0.05
@@ -347,40 +336,67 @@ def render(state: State) -> Image.Image:
     line_extra = int(breath * 8)
     draw.line((120 - line_extra, 148, 200 + line_extra, 148), fill=tint)
 
-    # UFO presence indicator — honors visual_ufo_mode.
+    # UFO presence indicator — pixel saucer + `@` indicator only.
     if state.attention_mode != "inward":
         ufo_t = (now_ms % 90000.0) / 90000.0
         ufo_cx = int(ufo_t * (COLS - 5)) + 3
         ufo_y_top = round(math.sin(now_ms / 2200.0) + 1.0)
         ufo_y_bot = ufo_y_top + 1
         if ufo_cx - 2 >= 0 and ufo_cx + 2 < COLS and ufo_y_bot < HORIZON_ROW:
-            body_fill = (0x6A, 0x70, 0x80)
-            base_fill = (0x40, 0x46, 0x50)
-            glyph_grey = (0xC8, 0xD0, 0xD8)
-            glyph_use = tint if state.ufo_mode == "mood" else glyph_grey
-            if state.ufo_mode == "grey":
-                # Saucer body: rounded circle (less blocky than rect).
-                body_cx = ufo_cx * CELL_W + CELL_W // 2
-                body_cy = ufo_y_top * CELL_H + CELL_H // 2
-                draw.ellipse(
-                    (body_cx - 9, body_cy - 9, body_cx + 9, body_cy + 9),
-                    fill=body_fill,
-                )
-                # Rim: thin horizontal stripe under the body.
-                rim_y = ufo_y_bot * CELL_H + CELL_H // 2 - 1
-                draw.rectangle(
-                    ((ufo_cx - 2) * CELL_W, rim_y,
-                     (ufo_cx - 2) * CELL_W + 5 * CELL_W, rim_y + 3),
-                    fill=base_fill,
-                )
-            put(ufo_cx - 1, ufo_y_top, glyph_use, "(")
-            put(ufo_cx,     ufo_y_top, glyph_use, "@")
-            put(ufo_cx + 1, ufo_y_top, glyph_use, ")")
-            put(ufo_cx - 2, ufo_y_bot, glyph_use, "<")
-            put(ufo_cx - 1, ufo_y_bot, glyph_use, ".")
-            put(ufo_cx,     ufo_y_bot, glyph_use, ".")
-            put(ufo_cx + 1, ufo_y_bot, glyph_use, ".")
-            put(ufo_cx + 2, ufo_y_bot, glyph_use, ">")
+            mode = state.ufo_mode
+            if mode == "mood":
+                dome_fill = tuple(int(c * 0.7) for c in tint)
+                disc_fill = tuple(int(c * 0.45) for c in tint)
+                glyph_at  = tint
+            else:
+                dome_fill = (0x88, 0x8C, 0x98)
+                disc_fill = (0x5A, 0x5E, 0x68)
+                glyph_at  = (0xE0, 0xE4, 0xEA)
+            body_cx = ufo_cx * CELL_W + CELL_W // 2
+
+            # Disc (oval): rectangle + cap circles
+            disc_cy = ufo_y_bot * CELL_H + 4
+            disc_half_w = (5 * CELL_W) // 2
+            disc_half_h = 3
+            rect_x = body_cx - disc_half_w + disc_half_h
+            rect_w = (disc_half_w - disc_half_h) * 2
+            rect_y = disc_cy - disc_half_h
+            rect_h = disc_half_h * 2
+            if mode == "outline":
+                draw.rectangle((rect_x, rect_y, rect_x + rect_w, rect_y + rect_h),
+                               outline=disc_fill)
+                draw.ellipse((body_cx - disc_half_w + disc_half_h - disc_half_h,
+                              disc_cy - disc_half_h,
+                              body_cx - disc_half_w + disc_half_h + disc_half_h,
+                              disc_cy + disc_half_h), outline=disc_fill)
+                draw.ellipse((body_cx + disc_half_w - disc_half_h - disc_half_h,
+                              disc_cy - disc_half_h,
+                              body_cx + disc_half_w - disc_half_h + disc_half_h,
+                              disc_cy + disc_half_h), outline=disc_fill)
+            else:
+                draw.rectangle((rect_x, rect_y, rect_x + rect_w, rect_y + rect_h),
+                               fill=disc_fill)
+                draw.ellipse((body_cx - disc_half_w + disc_half_h - disc_half_h,
+                              disc_cy - disc_half_h,
+                              body_cx - disc_half_w + disc_half_h + disc_half_h,
+                              disc_cy + disc_half_h), fill=disc_fill)
+                draw.ellipse((body_cx + disc_half_w - disc_half_h - disc_half_h,
+                              disc_cy - disc_half_h,
+                              body_cx + disc_half_w - disc_half_h + disc_half_h,
+                              disc_cy + disc_half_h), fill=disc_fill)
+
+            # Dome
+            dome_cy = ufo_y_top * CELL_H + CELL_H - 4
+            if mode == "outline":
+                draw.ellipse((body_cx - 9, dome_cy - 9, body_cx + 9, dome_cy + 9),
+                             outline=dome_fill)
+            else:
+                draw.ellipse((body_cx - 9, dome_cy - 9, body_cx + 9, dome_cy + 9),
+                             fill=dome_fill)
+
+            # @ indicator (centered on dome)
+            draw.text((body_cx, dome_cy + 1), "@", font=font, fill=glyph_at,
+                      anchor="mm")
 
     return img
 
