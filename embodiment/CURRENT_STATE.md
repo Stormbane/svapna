@@ -2,7 +2,7 @@
 
 Living document. Every BUILD cycle reads this first, updates this last.
 
-**Last updated**: 2026-04-25 — Cycle 2.7 shipped. Sky/grass color bands, breathing NARADA, weather wired into heartbeat.
+**Last updated**: 2026-04-25 — Cycle 2.8 shipped. Three tree depth planes, density-gradient horizon, visible 4s wordmark breath.
 
 ---
 
@@ -223,6 +223,19 @@ the full pick rationale and the experiment utterances.
       the heartbeat daemon — hourly fetch + push from
       `_maybe_pull_weather()` at the start of each beat. First
       step toward the managed schedule Suti named. 2026-04-25.
+- [x] **Cycle 2.8** — depth + breath revisions from Suti's feedback on
+      2.7. Drawn horizon line removed; grass density ramps from 10%
+      at row 10 to 75% at row 15 — horizon emerges from texture
+      distribution, reinforced by the sky/grass color split. 12 trees
+      now in three depth planes (4 background dim no-sway, 4 midground
+      partial-sway, 4 foreground full-sway with 2-cell trunks).
+      Trunks textured by mixing `|` and `!` glyphs and given a slow
+      micro-drift (3s period) so they're never frozen even in calm
+      weather. NARADA wordmark breath decoupled from heart period —
+      dedicated 4-second cycle at ±55 brightness amplitude, with the
+      mood line under it pulsing ±8px in length on the same phase.
+      ASCII-art techniques: atmospheric perspective via blend-toward-bg,
+      density gradient for implicit depth lines. 2026-04-25.
 - [ ] **Cycle 3** — THINKING + WORKING activity modes.
 - [ ] **Cycle 4** — signals + DELIGHTED.
 - [ ] **Cycle 5** — LISTENING + SPEAKING (karaoke + waveform). Touch
