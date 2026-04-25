@@ -28,6 +28,7 @@ from svapna.body.layers import (
     SignalKind,
     Utterance,
     Vitality,
+    Weather,
 )
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,22 @@ class ExpressionClient:
     def clear_signal(self) -> bool:
         return self._run("clear_signal", {})
 
+    def set_weather(self, weather: Weather) -> bool:
+        """Push environmental conditions to the body. Drives cloud / wind /
+        rain rendering in the horizon engine."""
+        w = weather.clamped()
+        return self._run(
+            "set_weather",
+            {
+                "wind_kmh":  w.wind_speed_kmh,
+                "wind_dir":  w.wind_direction_deg,
+                "precip":    w.precipitation_mm_hr,
+                "cloud_pct": w.cloud_cover_pct,
+                "wcode":     w.weather_code,
+                "temp_c":    w.temperature_c,
+            },
+        )
+
     # --------------------------------------------------------- batched convenience
 
     def write_state(self, mood: Mood | None = None,
@@ -146,7 +163,8 @@ class ExpressionClient:
                     attention: Attention | None = None,
                     activity: Activity | None = None,
                     utterance: Utterance | None = None,
-                    signal: Signal | None = None) -> bool:
+                    signal: Signal | None = None,
+                    weather: Weather | None = None) -> bool:
         """Write any subset of layers in sequence. Returns True iff every present
         layer wrote successfully. Each layer call is independent — partial
         success is possible. Use for end-of-cycle state pushes."""
@@ -171,4 +189,6 @@ class ExpressionClient:
                 ok = self.emit_signal(signal.kind, signal.duration_ms) and ok
             else:
                 ok = self.clear_signal() and ok
+        if weather is not None:
+            ok = self.set_weather(weather) and ok
         return ok

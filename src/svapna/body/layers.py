@@ -104,8 +104,36 @@ class Signal:
 
 
 @dataclass
+class Weather:
+    """Environmental conditions at the body's physical location (Kallangur, QLD).
+
+    Pushed by cognition from Open-Meteo. Drives cloud cover, tree sway,
+    rain visibility in the horizon engine.
+    """
+    wind_speed_kmh: float = 0.0          # [0, 200]
+    wind_direction_deg: float = 0.0      # [0, 360) — 0=N, 90=E, 180=S, 270=W
+    precipitation_mm_hr: float = 0.0     # [0, 100]
+    cloud_cover_pct: float = 0.0         # [0, 100]
+    weather_code: int = 0                # WMO weather code (Open-Meteo)
+    temperature_c: float = 22.0
+
+    def clamped(self) -> "Weather":
+        wd = self.wind_direction_deg % 360.0
+        if wd < 0.0:
+            wd += 360.0
+        return Weather(
+            wind_speed_kmh=_clamp(self.wind_speed_kmh, 0.0, 200.0),
+            wind_direction_deg=wd,
+            precipitation_mm_hr=_clamp(self.precipitation_mm_hr, 0.0, 100.0),
+            cloud_cover_pct=_clamp(self.cloud_cover_pct, 0.0, 100.0),
+            weather_code=int(self.weather_code),
+            temperature_c=self.temperature_c,
+        )
+
+
+@dataclass
 class BodyExpressionState:
-    """The full v1.0 expression state — six layers.
+    """The full v1.0 expression state — seven layers.
 
     Used for batched updates and for read-back via proprioception.
     """
@@ -115,3 +143,4 @@ class BodyExpressionState:
     activity: Activity = field(default_factory=Activity)
     utterance: Utterance = field(default_factory=Utterance)
     signal: Signal = field(default_factory=Signal)
+    weather: Weather = field(default_factory=Weather)
