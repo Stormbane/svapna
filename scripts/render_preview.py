@@ -230,33 +230,17 @@ def render(state: State) -> Image.Image:
         moon_y = _clamp(moon_y, 1, 6)
         render_celestial(moon_x, moon_y, (0xC8, 0xCC, 0xD8), 2400.0, 5)
 
-    # Clouds — soft puff body under wispy glyphs.
+    # Clouds — high-contrast glyphs only, no body fill.
     is_raining = state.precip > 0.05
     n_clouds = math.ceil(state.cloud_pct / 30.0)
     n_clouds = _clamp(n_clouds, 0, MAX_CLOUDS)
-    cc = (0x46, 0x4C, 0x5A) if is_raining else (0x6A, 0x72, 0x80)
-    cloud_body = (0x5C, 0x64, 0x70) if is_raining else (0xB8, 0xC0, 0xC8)
+    cc = (0x5A, 0x60, 0x68) if is_raining else (0xE8, 0xEC, 0xF0)
     for c in range(n_clouds):
         base_x = (c * 11 + int((now_ms / 100) % COLS)) % (COLS + 8) - 4
         idx = c & 3
         y = CLOUD_Y[c]
         main = CLOUD_MAIN[idx]
         main_len = len(main)
-        # Body fill — horizontal lozenge.
-        body_left = (base_x + 1) * CELL_W
-        body_w = (main_len - 2) * CELL_W
-        if body_w > 0:
-            body_y = y * CELL_H + 4
-            body_h = 8
-            body_cy = body_y + body_h // 2
-            draw.rectangle((body_left, body_y, body_left + body_w, body_y + body_h),
-                           fill=cloud_body)
-            cap_r = body_h // 2 + 1
-            draw.ellipse((body_left - cap_r, body_cy - cap_r,
-                          body_left + cap_r, body_cy + cap_r), fill=cloud_body)
-            draw.ellipse((body_left + body_w - cap_r, body_cy - cap_r,
-                          body_left + body_w + cap_r, body_cy + cap_r), fill=cloud_body)
-        # Glyph wisps on top.
         for k, ch in enumerate(main):
             if is_raining:
                 if ch == '~': ch = '='
@@ -294,18 +278,29 @@ def render(state: State) -> Image.Image:
     plane_blend = [0.65, 0.35, 0.0]
     plane_sway  = [0.0,  0.6,  1.0]
     sway_amp = _clamp(state.wind_kmh / 25.0, 0.0, 3.0)
-    foliage_base = (0x2C, 0x3A, 0x20)
-    trunk_base   = (0x3C, 0x28, 0x18)
+    foliage_body_pal = [
+        (0x4A, 0x68, 0x28),
+        (0x68, 0x78, 0x30),
+        (0x38, 0x5A, 0x28),
+        (0x58, 0x6E, 0x38),
+    ]
+    foliage_hi_pal = [
+        (0x8A, 0xA8, 0x58),
+        (0xA0, 0xB0, 0x48),
+        (0x70, 0x9A, 0x48),
+        (0x9A, 0xB0, 0x68),
+    ]
+    trunk_base = (0x3C, 0x28, 0x18)
     for t in range(N_TREES):
         p = T_PLANE[t]
         base_col = T_COLS[t]
         h = T_H[t]
         cw = T_CW[t]
         pb = plane_blend[p]
-        tree_color = (
-            int(tint[0] * (1 - pb) + 0x10 * pb),
-            int(tint[1] * (1 - pb) + 0x16 * pb),
-            int(tint[2] * (1 - pb) + 0x10 * pb),
+        # Per-tree foliage colors from palette.
+        hi_rgb = foliage_hi_pal[t & 3]
+        tree_color = tuple(
+            int(hi_rgb[i] * (1 - pb) + grass[i] * pb) for i in range(3)
         )
         trunk_color = (
             int(0x55 * (1 - pb) + 0x10 * pb),
@@ -339,8 +334,9 @@ def render(state: State) -> Image.Image:
         trunk_body = tuple(
             int(trunk_base[i] * (1 - pb) + grass[i] * pb) for i in range(3)
         )
+        body_rgb = foliage_body_pal[t & 3]
         foliage_body = tuple(
-            int(foliage_base[i] * (1 - pb) + grass[i] * pb) for i in range(3)
+            int(body_rgb[i] * (1 - pb) + grass[i] * pb) for i in range(3)
         )
 
         # Trunk body fill — narrow brown rectangle.

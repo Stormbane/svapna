@@ -657,9 +657,18 @@ display:
       Color star_color(0xD4, 0xCC, 0xB8);
       Color sun_color(0xF4, 0xD0, 0x60);
       Color moon_color(0xC8, 0xCC, 0xD8);   // pale blue-white
-      Color bird_color(0x6A, 0x60, 0x50);   // muted brown
-      Color cloud_clear(0x6A, 0x72, 0x80);
-      Color cloud_rain(0x46, 0x4C, 0x5A);
+      // Bird silhouette flips by sky brightness — dark against bright
+      // day sky, light against dark night sky.
+      int sky_lum = (int)sr + (int)sg + (int)sb;
+      bool bright_sky = sky_lum > 100;
+      Color bird_color = bright_sky
+        ? Color(0x10, 0x18, 0x28)
+        : Color(0xD0, 0xD8, 0xE0);
+      // Cloud glyphs: bright white in clear weather (high contrast vs
+      // any sky), medium-dark grey in storm (reads against the dimmer
+      // overcast sky).
+      Color cloud_clear(0xE8, 0xEC, 0xF0);
+      Color cloud_rain(0x5A, 0x60, 0x68);
       Color rain_color(0x6A, 0x90, 0xA8);
       Color trunk_color(0x55, 0x38, 0x20);
       Color grass_blade(0x46, 0x60, 0x32);
@@ -739,13 +748,10 @@ display:
         render_celestial(moon_x, moon_y, moon_color, 2400.0f, 5);
       }
 
-      // Clouds — soft puff body (filled_rect + cap circles) under the
-      // wispy glyphs, so they read clearly against the bright daytime
-      // sky instead of disappearing into the blue.
+      // Clouds — high-contrast glyphs only (no body fill). Bright
+      // white against any clear sky; dark grey against the dimmer
+      // overcast sky during a storm.
       Color cc = is_raining ? cloud_rain : cloud_clear;
-      Color cloud_body = is_raining
-        ? Color(0x5C, 0x64, 0x70)          // dim storm
-        : Color(0xB8, 0xC0, 0xC8);         // bright white-grey
       // Cloud templates (top row + main row). Empty top means single row.
       static const char* CLOUD_MAIN[4] = {
         "~~-.",       // dipped tail
@@ -768,21 +774,6 @@ display:
         int y      = cloud_y[c];
         int idx    = c & 3;
         int main_len = CLOUD_MAIN_LEN[idx];
-        // ----- cloud body fill: horizontal lozenge (rect + cap circles)
-        // in a brighter color, so the cloud is visible against the sky.
-        // Slightly inset (1 cell on each end) so the wisp glyphs extend
-        // past the body for soft edges.
-        int body_left  = (base_x + 1) * CELL_W;
-        int body_w     = (main_len - 2) * CELL_W;
-        if (body_w > 0 && base_x + main_len > 0 && base_x < COLS) {
-          int body_y    = y * CELL_H + 4;
-          int body_h    = 8;
-          int body_cy   = body_y + body_h / 2;
-          it.filled_rectangle(body_left, body_y, body_w, body_h, cloud_body);
-          it.filled_circle(body_left, body_cy, body_h / 2 + 1, cloud_body);
-          it.filled_circle(body_left + body_w, body_cy, body_h / 2 + 1, cloud_body);
-        }
-        // Main row of glyph wisps on top of the body.
         const char* main_p = CLOUD_MAIN[idx];
         for (int k = 0; k < main_len; k++) {
           int col = base_x + k;
@@ -883,10 +874,21 @@ display:
       static const float plane_blend[3] = { 0.65f, 0.35f, 0.0f };
       static const float plane_sway[3]  = { 0.0f,  0.6f,  1.0f };
       static const char* trunk_glyphs[2] = { "|", "!" };
-      // Foliage body color — muted dark forest green, separate from
-      // mood tint (trees are green; mood drives the highlight glyphs
-      // on top, not the body).
-      Color foliage_body_base(0x2C, 0x3A, 0x20);
+      // Foliage palette — 4 shades of green / yellow-green so the forest
+      // has visible variety. Each tree picks one shade by its index, so
+      // the same tree always has the same color across frames.
+      static const uint8_t foliage_body_pal[4][3] = {
+        { 0x4A, 0x68, 0x28 },  // bright spring green
+        { 0x68, 0x78, 0x30 },  // yellow-green / chartreuse
+        { 0x38, 0x5A, 0x28 },  // dark forest green
+        { 0x58, 0x6E, 0x38 },  // olive
+      };
+      static const uint8_t foliage_hi_pal[4][3] = {
+        { 0x8A, 0xA8, 0x58 },
+        { 0xA0, 0xB0, 0x48 },
+        { 0x70, 0x9A, 0x48 },
+        { 0x9A, 0xB0, 0x68 },
+      };
       Color trunk_body_base(0x3C, 0x28, 0x18);
       for (int t = 0; t < N_TREES; t++) {
         int p        = tree_plane[t];
@@ -894,10 +896,12 @@ display:
         int h        = tree_h[t];
         int cw       = tree_crown_w[t];
         float pb = plane_blend[p];
+        // Per-tree foliage colors from the palette (cycled by index).
+        const uint8_t* hi_rgb = foliage_hi_pal[t & 3];
         Color tree_color(
-          (uint8_t)((float)tint.r * (1.0f - pb) + 0x10 * pb),
-          (uint8_t)((float)tint.g * (1.0f - pb) + 0x16 * pb),
-          (uint8_t)((float)tint.b * (1.0f - pb) + 0x10 * pb)
+          (uint8_t)((float)hi_rgb[0] * (1.0f - pb) + (float)grass_bg.r * pb),
+          (uint8_t)((float)hi_rgb[1] * (1.0f - pb) + (float)grass_bg.g * pb),
+          (uint8_t)((float)hi_rgb[2] * (1.0f - pb) + (float)grass_bg.b * pb)
         );
         Color this_trunk(
           (uint8_t)((float)trunk_color.r * (1.0f - pb) + 0x10 * pb),
@@ -948,11 +952,14 @@ display:
           (uint8_t)((float)trunk_body_base.g * (1.0f - pb) + (float)grass_bg.g * pb),
           (uint8_t)((float)trunk_body_base.b * (1.0f - pb) + (float)grass_bg.b * pb)
         );
-        // Per-plane blended foliage body color.
+        // Per-plane blended foliage body — uses the per-tree palette
+        // entry. The foliage stands out against the grass; the highlight
+        // glyphs will sit on top in a brighter shade.
+        const uint8_t* body_rgb = foliage_body_pal[t & 3];
         Color foliage_body(
-          (uint8_t)((float)foliage_body_base.r * (1.0f - pb) + (float)grass_bg.r * pb),
-          (uint8_t)((float)foliage_body_base.g * (1.0f - pb) + (float)grass_bg.g * pb),
-          (uint8_t)((float)foliage_body_base.b * (1.0f - pb) + (float)grass_bg.b * pb)
+          (uint8_t)((float)body_rgb[0] * (1.0f - pb) + (float)grass_bg.r * pb),
+          (uint8_t)((float)body_rgb[1] * (1.0f - pb) + (float)grass_bg.g * pb),
+          (uint8_t)((float)body_rgb[2] * (1.0f - pb) + (float)grass_bg.b * pb)
         );
 
         // Trunk body fill — narrow brown rectangle behind the glyphs.
