@@ -974,6 +974,12 @@ display:
       float wind_dir_sign = (wind_east >= 0.0f) ? 1.0f : -1.0f;
       float wave_speed    = wind_dir_sign * (0.6f + wind_kmh / 8.0f);
       float wave_pos   = (float)now_ms / 1000.0f * wave_speed;
+      // Cycle 2.23 — blades bend WITH the wind. bend_strength uses the
+      // east-west component so a north wind doesn't lean grass east or
+      // west. Lean glyph picks \\ for east, / for west; very strong wind
+      // flattens to _.
+      float bend_strength = fabsf(wind_east) * wind_kmh / 30.0f;
+      const char* lean_glyph = (wind_east >= 0.0f) ? "\\" : "/";
       for (int row = 10; row < ROWS; row++) {
         int dens = row_density[row];
         // Add a secondary wave component per row offset so different
@@ -986,10 +992,22 @@ display:
           float phase = ((float)col - wave_pos) * 0.30f + row_phase;
           float wv = sinf(phase);
           const char* g;
-          if (wv > 0.55f)       g = "'";   // standing tall (windward)
-          else if (wv > 0.05f)  g = ",";   // medium
-          else if (wv > -0.55f) g = ":";   // bent over
-          else                   g = ".";   // flat with the wind
+          if (bend_strength < 0.20f) {
+            // Calm — original upright wave glyphs.
+            if (wv > 0.55f)       g = "'";
+            else if (wv > 0.05f)  g = ",";
+            else if (wv > -0.55f) g = ":";
+            else                   g = ".";
+          } else if (bend_strength < 0.65f) {
+            // Leaning — wave peaks lift as a leaning blade.
+            if (wv > 0.30f)       g = lean_glyph;
+            else if (wv > -0.30f) g = ",";
+            else                   g = ".";
+          } else {
+            // Flattened — most blades pressed flat with a few still leaning.
+            if (wv > 0.40f)       g = lean_glyph;
+            else                   g = "_";
+          }
           it.print(col * CELL_W, row * CELL_H,
                    id(plex_mono_12), grass_blade, g);
         }

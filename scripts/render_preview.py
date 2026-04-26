@@ -252,12 +252,18 @@ def render(state: State) -> Image.Image:
                 if is_raining and ch == '~': ch = '='
                 put(base_x + CLOUD_TOP_OFFSET[idx] + k, y - 1, cc, ch)
 
-    # Grass — wave-pattern density gradient.
+    # Grass — wave-pattern density gradient. Blades bend toward the wind:
+    # calm → upright glyphs (' , : .); moderate east/west wind → leaning
+    # \ or / blades; strong wind → flattened _.
     row_density = [0]*10 + [10, 20, 35, 50, 65, 78]
     wind_east = math.sin(math.radians(state.wind_dir))
     wind_dir_sign = 1.0 if wind_east >= 0 else -1.0
     wave_speed = wind_dir_sign * (0.6 + state.wind_kmh / 8.0)
     wave_pos = (now_ms / 1000.0) * wave_speed
+    # bend_strength uses the east-west *component* of wind, not just speed,
+    # so a north wind doesn't bend grass east or west.
+    bend_strength = abs(wind_east) * state.wind_kmh / 30.0
+    lean_glyph = "\\" if wind_east >= 0 else "/"
     for row in range(10, ROWS):
         dens = row_density[row]
         row_phase = (row - 10) * 0.4
@@ -268,10 +274,20 @@ def render(state: State) -> Image.Image:
                 continue
             ph = (col - wave_pos) * 0.30 + row_phase
             wv = math.sin(ph)
-            if wv > 0.55:    g = "'"
-            elif wv > 0.05:  g = ","
-            elif wv > -0.55: g = ":"
-            else:             g = "."
+            if bend_strength < 0.20:
+                if wv > 0.55:    g = "'"
+                elif wv > 0.05:  g = ","
+                elif wv > -0.55: g = ":"
+                else:             g = "."
+            elif bend_strength < 0.65:
+                # Leaning — wave peaks lift as a leaning blade, troughs lie low.
+                if wv > 0.30:    g = lean_glyph
+                elif wv > -0.30: g = ","
+                else:             g = "."
+            else:
+                # Flattened — a few blades still leaning, most pressed flat.
+                if wv > 0.40:    g = lean_glyph
+                else:             g = "_"
             put(col, row, (0x46, 0x60, 0x32), g)
 
     # Trees — three planes, triangular crowns.
