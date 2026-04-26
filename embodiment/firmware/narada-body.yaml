@@ -779,17 +779,30 @@ display:
       uint8_t gr_base = (uint8_t)(gr_n + (gr_d - gr_n) * day_f);
       uint8_t gg_base = (uint8_t)(gg_n + (gg_d - gg_n) * day_f);
       uint8_t gb_base = (uint8_t)(gb_n + (gb_d - gb_n) * day_f);
-      // Cycle 2.24 — cloud shadow on the foreground. When sky is overcast,
-      // the grass band and everything sitting on it dims. shadow_strength
-      // ramps from 0% at cloud_pct=50 to ~18% at cloud_pct=100.
+      // Cycle 2.24 — cloud shadow on the foreground.
       float shadow_strength = (cloud_pct - 50.0f) / 50.0f * 0.18f;
       if (shadow_strength < 0.0f) shadow_strength = 0.0f;
       float shadow_factor = 1.0f - shadow_strength;
-      Color grass_bg(
-        (uint8_t)(gr_base * shadow_factor),
-        (uint8_t)(gg_base * shadow_factor),
-        (uint8_t)(gb_base * shadow_factor)
-      );
+      // Cycle 2.27 — golden hour. ~30 min around sunrise (6.0) and sunset
+      // (17.0), warm amber lights up the foreground. Suppressed by overcast.
+      float sunrise_t = 1.0f - fabsf(hour_of_day - 6.0f) / 0.7f;
+      if (sunrise_t < 0.0f) sunrise_t = 0.0f;
+      float sunset_t = 1.0f - fabsf(hour_of_day - 17.0f) / 0.7f;
+      if (sunset_t < 0.0f) sunset_t = 0.0f;
+      float golden_t = (sunrise_t > sunset_t) ? sunrise_t : sunset_t;
+      float golden_strength = golden_t * 0.55f * shadow_factor;
+      auto warm_shade = [&](float r, float g, float b) -> Color {
+        float wr = r + 55.0f * golden_strength;
+        float wg = g + 25.0f * golden_strength;
+        float wb = b - 20.0f * golden_strength;
+        if (wr < 0.0f) wr = 0.0f; if (wr > 255.0f) wr = 255.0f;
+        if (wg < 0.0f) wg = 0.0f; if (wg > 255.0f) wg = 255.0f;
+        if (wb < 0.0f) wb = 0.0f; if (wb > 255.0f) wb = 255.0f;
+        return Color((uint8_t)(wr * shadow_factor),
+                     (uint8_t)(wg * shadow_factor),
+                     (uint8_t)(wb * shadow_factor));
+      };
+      Color grass_bg = warm_shade((float)gr_base, (float)gg_base, (float)gb_base);
       it.fill(sky_bg);
       it.filled_rectangle(0, HORIZON_ROW * CELL_H,
                           320, 240 - HORIZON_ROW * CELL_H,
@@ -811,14 +824,8 @@ display:
       Color cloud_clear(0xE8, 0xEC, 0xF0);
       Color cloud_rain(0x5A, 0x60, 0x68);
       Color rain_color(0x6A, 0x90, 0xA8);
-      Color trunk_color(
-        (uint8_t)(0x55 * shadow_factor),
-        (uint8_t)(0x38 * shadow_factor),
-        (uint8_t)(0x20 * shadow_factor));
-      Color grass_blade(
-        (uint8_t)(0x46 * shadow_factor),
-        (uint8_t)(0x60 * shadow_factor),
-        (uint8_t)(0x32 * shadow_factor));
+      Color trunk_color = warm_shade(0x55, 0x38, 0x20);
+      Color grass_blade = warm_shade(0x46, 0x60, 0x32);
 
       // Sky: stars (night only, not overcast), sun (day), moon (night).
       if (!is_day && cloud_pct < 50.0f) {
@@ -1090,10 +1097,7 @@ display:
         { 0x70, 0x9A, 0x48 },
         { 0x9A, 0xB0, 0x68 },
       };
-      Color trunk_body_base(
-        (uint8_t)(0x3C * shadow_factor),
-        (uint8_t)(0x28 * shadow_factor),
-        (uint8_t)(0x18 * shadow_factor));
+      Color trunk_body_base = warm_shade(0x3C, 0x28, 0x18);
       for (int t = 0; t < N_TREES; t++) {
         int p        = tree_plane[t];
         int base_col = tree_col[t];

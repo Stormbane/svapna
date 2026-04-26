@@ -147,12 +147,21 @@ def render(state: State) -> Image.Image:
     else:
         day_f = 0.0
     grass = tuple(int(night[i] + (day[i] - night[i]) * day_f) for i in range(3))
-    # Cycle 2.24 — cloud shadow on the foreground. When sky is overcast,
-    # the grass band and everything sitting on it dims. Effect ramps from
-    # 0% at cloud_pct=50 to ~18% at cloud_pct=100.
+    # Cycle 2.24 — cloud shadow on the foreground.
     shadow_strength = max(0.0, (state.cloud_pct - 50.0) / 50.0) * 0.18
-    shade = lambda c: tuple(int(v * (1.0 - shadow_strength)) for v in c)
-    if shadow_strength > 0.0:
+    # Cycle 2.27 — golden hour. ~30 min around sunrise (6.0) and sunset
+    # (17.0), warm amber lights up the foreground. Suppressed by overcast.
+    sunrise_t = max(0.0, 1.0 - abs(state.hour - 6.0) / 0.7)
+    sunset_t  = max(0.0, 1.0 - abs(state.hour - 17.0) / 0.7)
+    golden_strength = max(sunrise_t, sunset_t) * 0.55 * (1.0 - shadow_strength)
+    def shade(c):
+        c = (
+            _clamp(int(c[0] + 55 * golden_strength), 0, 255),
+            _clamp(int(c[1] + 25 * golden_strength), 0, 255),
+            _clamp(int(c[2] - 20 * golden_strength), 0, 255),
+        )
+        return tuple(int(v * (1.0 - shadow_strength)) for v in c)
+    if shadow_strength > 0.0 or golden_strength > 0.0:
         grass = shade(grass)
     draw.rectangle((0, 0, SCREEN_W, HORIZON_ROW * CELL_H), fill=sky)
     draw.rectangle((0, HORIZON_ROW * CELL_H, SCREEN_W, SCREEN_H), fill=grass)
