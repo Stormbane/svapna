@@ -134,9 +134,19 @@ def render(state: State) -> Image.Image:
     now_ms = state.now_ms
     is_day = (state.hour >= 6.0 and state.hour < 18.0)
 
-    # Background — sky band + grass band.
+    # Background — sky band + grass band. Grass brightens during the day.
     sky = _sky_color(state.hour, state.lightning)
-    grass = (0x10, 0x16, 0x10)
+    night = (0x10, 0x16, 0x10)
+    day = (0x28, 0x38, 0x1C)
+    if 8.0 <= state.hour < 16.0:
+        day_f = 1.0
+    elif 5.0 <= state.hour < 8.0:
+        day_f = (state.hour - 5.0) / 3.0
+    elif 16.0 <= state.hour < 19.0:
+        day_f = 1.0 - (state.hour - 16.0) / 3.0
+    else:
+        day_f = 0.0
+    grass = tuple(int(night[i] + (day[i] - night[i]) * day_f) for i in range(3))
     draw.rectangle((0, 0, SCREEN_W, HORIZON_ROW * CELL_H), fill=sky)
     draw.rectangle((0, HORIZON_ROW * CELL_H, SCREEN_W, SCREEN_H), fill=grass)
 
@@ -220,19 +230,33 @@ def render(state: State) -> Image.Image:
         moon_y = _clamp(moon_y, 1, 6)
         render_celestial(moon_x, moon_y, (0xC8, 0xCC, 0xD8), 2400.0, 5)
 
-    # Clouds — wispy multi-line shapes. ceil-style count so any cloud
-    # cover gives at least one cloud; 32% gives 2 not 1.
+    # Clouds — soft puff body under wispy glyphs.
     is_raining = state.precip > 0.05
     n_clouds = math.ceil(state.cloud_pct / 30.0)
     n_clouds = _clamp(n_clouds, 0, MAX_CLOUDS)
     cc = (0x46, 0x4C, 0x5A) if is_raining else (0x6A, 0x72, 0x80)
-    # Simple cloud x positions for preview (snapshot — no animation drift).
+    cloud_body = (0x5C, 0x64, 0x70) if is_raining else (0xB8, 0xC0, 0xC8)
     for c in range(n_clouds):
-        # Spread roughly evenly across screen.
         base_x = (c * 11 + int((now_ms / 100) % COLS)) % (COLS + 8) - 4
         idx = c & 3
         y = CLOUD_Y[c]
         main = CLOUD_MAIN[idx]
+        main_len = len(main)
+        # Body fill — horizontal lozenge.
+        body_left = (base_x + 1) * CELL_W
+        body_w = (main_len - 2) * CELL_W
+        if body_w > 0:
+            body_y = y * CELL_H + 4
+            body_h = 8
+            body_cy = body_y + body_h // 2
+            draw.rectangle((body_left, body_y, body_left + body_w, body_y + body_h),
+                           fill=cloud_body)
+            cap_r = body_h // 2 + 1
+            draw.ellipse((body_left - cap_r, body_cy - cap_r,
+                          body_left + cap_r, body_cy + cap_r), fill=cloud_body)
+            draw.ellipse((body_left + body_w - cap_r, body_cy - cap_r,
+                          body_left + body_w + cap_r, body_cy + cap_r), fill=cloud_body)
+        # Glyph wisps on top.
         for k, ch in enumerate(main):
             if is_raining:
                 if ch == '~': ch = '='
@@ -270,6 +294,8 @@ def render(state: State) -> Image.Image:
     plane_blend = [0.65, 0.35, 0.0]
     plane_sway  = [0.0,  0.6,  1.0]
     sway_amp = _clamp(state.wind_kmh / 25.0, 0.0, 3.0)
+    foliage_base = (0x2C, 0x3A, 0x20)
+    trunk_base   = (0x3C, 0x28, 0x18)
     for t in range(N_TREES):
         p = T_PLANE[t]
         base_col = T_COLS[t]
@@ -309,7 +335,27 @@ def render(state: State) -> Image.Image:
         trunk_top = min(ROWS, crown_top + crown_h)
         trunk_w = 2 if (p == 2 and trunk_h >= 2) else 1
 
-        # Trunk
+        # Per-plane blended body colors.
+        trunk_body = tuple(
+            int(trunk_base[i] * (1 - pb) + grass[i] * pb) for i in range(3)
+        )
+        foliage_body = tuple(
+            int(foliage_base[i] * (1 - pb) + grass[i] * pb) for i in range(3)
+        )
+
+        # Trunk body fill — narrow brown rectangle.
+        if trunk_h > 0:
+            trunk_rect_left = (base_col + trunk_dx) * CELL_W + 1
+            trunk_rect_w    = trunk_w * CELL_W - 2
+            trunk_rect_top  = trunk_top * CELL_H
+            trunk_rect_h    = (ROWS - trunk_top) * CELL_H
+            if trunk_rect_left >= 0 and trunk_rect_left + trunk_rect_w < SCREEN_W:
+                draw.rectangle((trunk_rect_left, trunk_rect_top,
+                                trunk_rect_left + trunk_rect_w,
+                                trunk_rect_top + trunk_rect_h),
+                               fill=trunk_body)
+
+        # Trunk glyphs on top.
         trunk_glyphs = ["|", "!"]
         for r in range(trunk_top, ROWS):
             for dx in range(trunk_w):
@@ -319,6 +365,29 @@ def render(state: State) -> Image.Image:
         # Crown shape depends on species.
         is_oak = (state.tree_species == "oak") or \
                  (state.tree_species == "mixed" and (t & 1))
+
+        # Crown body fill.
+        if is_oak:
+            body_cx = (base_col + crown_dx) * CELL_W + CELL_W // 2
+            body_cy = (crown_top + crown_h // 2) * CELL_H + CELL_H // 2
+            body_r  = max(1, (cw * CELL_W) // 2 - 1)
+            draw.ellipse((body_cx - body_r, body_cy - body_r,
+                          body_cx + body_r, body_cy + body_r), fill=foliage_body)
+        else:
+            for rk in range(crown_h):
+                r = crown_top + rk
+                w_here = 1 + (rk * (cw - 1)) // max(1, crown_h - 1)
+                w_here = _clamp(w_here, 1, cw)
+                half_l = w_here // 2
+                rect_left = (base_col + crown_dx - half_l) * CELL_W
+                rect_w    = w_here * CELL_W
+                rect_top  = r * CELL_H + 2
+                rect_h    = CELL_H - 2
+                if rect_left + rect_w > 0 and rect_left < SCREEN_W:
+                    draw.rectangle((rect_left, rect_top,
+                                    rect_left + rect_w, rect_top + rect_h),
+                                   fill=foliage_body)
+
         for rk in range(crown_h):
             r = crown_top + rk
             if is_oak:
