@@ -315,6 +315,23 @@ api:
             id(remote_frame_active) = enabled;
             ESP_LOGI("frame", "remote_frame_active = %d", (int)enabled);
 
+    # --- Cycle 3.1 — bhumi switch ---
+    # Direct world-switch hook. Allowlisted to prevent unknown values.
+    # The sandhi engine (cycle 3.2) will eventually drive this from
+    # activity_mode transitions.
+    - service: set_bhumi
+      variables:
+        name: string
+      then:
+        - lambda: |-
+            if (name == std::string("landscape") ||
+                name == std::string("ufo_interior")) {
+              id(bhumi_current) = name;
+              ESP_LOGI("bhumi", "bhumi_current = %s", name.c_str());
+            } else {
+              ESP_LOGW("bhumi", "unknown bhumi: %s", name.c_str());
+            }
+
 time:
   - platform: sntp
     id: sntp_time
@@ -344,6 +361,13 @@ globals:
   - id: remote_frame_buffer
     type: uint8_t*
     initial_value: 'nullptr'
+
+  # --- Cycle 3.1 — current bhumi (world model). "landscape" or
+  # "ufo_interior". Eventually driven by activity_mode via the sandhi
+  # engine; for now switchable directly via set_bhumi.
+  - id: bhumi_current
+    type: std::string
+    initial_value: '"landscape"'
 
   # --- backwards-compat globals (remove after Cycle 2 once daemon migrates) ---
   - id: heartbeat_status_str
@@ -479,6 +503,149 @@ display:
             uint8_t b = (p << 3) & 0xF8;
             it.draw_pixel_at(x, y, Color(r, g, b));
           }
+        }
+        return;
+      }
+
+      // ===================================================================
+      // CYCLE 3.1 — bhumi dispatch. ufo_interior is the inside-the-saucer
+      // view: dark cockpit, porthole onto the sky, alien-Narada with
+      // beating heart + saccading eyes. Switch via set_bhumi service.
+      // ===================================================================
+      if (id(bhumi_current) == std::string("ufo_interior")) {
+        // --- ambient state (pulled from globals; subset of landscape's) ---
+        uint32_t bhumi_now_ms = millis();
+        // Brisbane local time for sky color through the porthole.
+        auto brisbane_now = id(sntp_time).now();
+        float ufo_hour = 12.0f;
+        if (brisbane_now.is_valid()) {
+          ufo_hour = (float)brisbane_now.hour + (float)brisbane_now.minute / 60.0f;
+        }
+        bool ufo_is_day = (ufo_hour >= 6.0f && ufo_hour < 18.0f);
+        float ufo_cloud = id(weather_cloud_cover_pct);
+
+        // Sky color for porthole — same palette as landscape sky.
+        uint8_t psr, psg, psb;
+        if      (ufo_hour >= 4.5f  && ufo_hour < 6.0f)  { psr=0x30; psg=0x18; psb=0x44; }
+        else if (ufo_hour >= 6.0f  && ufo_hour < 7.0f)  { psr=0x60; psg=0x24; psb=0x40; }
+        else if (ufo_hour >= 7.0f  && ufo_hour < 8.0f)  { psr=0x58; psg=0x38; psb=0x40; }
+        else if (ufo_hour >= 8.0f  && ufo_hour < 16.0f) { psr=0x20; psg=0x40; psb=0x70; }
+        else if (ufo_hour >= 16.0f && ufo_hour < 17.0f) { psr=0x40; psg=0x30; psb=0x40; }
+        else if (ufo_hour >= 17.0f && ufo_hour < 18.0f) { psr=0x70; psg=0x28; psb=0x20; }
+        else if (ufo_hour >= 18.0f && ufo_hour < 19.0f) { psr=0x50; psg=0x18; psb=0x30; }
+        else if (ufo_hour >= 19.0f && ufo_hour < 20.0f) { psr=0x28; psg=0x14; psb=0x40; }
+        else                                             { psr=0x08; psg=0x0E; psb=0x18; }
+        Color porthole_sky(psr, psg, psb);
+
+        // Cockpit walls.
+        it.fill(Color(0x15, 0x18, 0x20));
+
+        // Porthole — fill circle in sky color, then stroke a rim ring.
+        const int px = 160, py = 72, pr = 60;
+        it.filled_circle(px, py, pr, porthole_sky);
+        Color rim(0x60, 0x65, 0x70);
+        it.circle(px, py, pr, rim);
+        it.circle(px, py, pr + 1, rim);
+
+        // Stars through the porthole — generate a small set seeded by
+        // a constant. (The landscape star arrays are local to that
+        // branch so we re-derive a few here.)
+        if (!ufo_is_day && ufo_cloud < 50.0f) {
+          uint32_t seed = 0xa11ce5u;
+          for (int i = 0; i < 8; i++) {
+            seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+            int scol = (int)(seed % 44u);
+            seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+            int srow = (int)(seed % 7u);
+            seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+            float ph = (float)(seed % 1000u) / 1000.0f * 6.2831853f;
+            int sxp = scol * 7 + 3;
+            int syp = srow * 14 + 7;
+            int dx = sxp - px, dy = syp - py;
+            if (dx * dx + dy * dy > (pr - 6) * (pr - 6)) continue;
+            float b = (sinf((float)bhumi_now_ms / 700.0f + ph) + 1.0f) * 0.5f;
+            if (b > 0.65f) {
+              it.print(sxp, syp, id(plex_mono_12),
+                       Color(0xD4, 0xCC, 0xB8), TextAlign::CENTER, "*");
+            }
+          }
+        }
+        if (ufo_is_day) {
+          float t_day_u = (ufo_hour - 6.0f) / 12.0f;
+          int sun_col = (int)(t_day_u * 43.0f);
+          int sun_row = (int)roundf(6.0f - sinf(3.14159f * t_day_u) * 6.0f);
+          if (sun_row < 1) sun_row = 1;
+          int sxp = sun_col * 7 + 3;
+          int syp = sun_row * 14 + 7;
+          int dx = sxp - px, dy = syp - py;
+          if (dx * dx + dy * dy < (pr - 8) * (pr - 8)) {
+            it.filled_circle(sxp, syp, 6, Color(0xF4, 0xD0, 0x60));
+          }
+        }
+
+        // Mood tint for accent (heart).
+        float v = (id(mood_valence) + 1.0f) * 0.5f;
+        float a = id(mood_arousal);
+        auto bcomp = [&](float c00, float c10, float c01, float c11) -> uint8_t {
+          float r = (1.0f - v) * (1.0f - a) * c00 + v * (1.0f - a) * c10
+                  + (1.0f - v) * a * c01 + v * a * c11;
+          if (r < 0.0f) r = 0.0f; if (r > 255.0f) r = 255.0f;
+          return (uint8_t)r;
+        };
+        uint8_t tr = bcomp(0x4A, 0xC4, 0xB0, 0x7A);
+        uint8_t tg = bcomp(0x55, 0x96, 0x40, 0x50);
+        uint8_t tb = bcomp(0x60, 0x2A, 0x60, 0x8C);
+
+        // Alien Narada — head brackets + eyes + heart, centered.
+        Color skin(0x90, 0xA8, 0x70);
+        Color eyes(0xE0, 0xE4, 0xEA);
+        it.print(20 * 7, 10 * 14, id(plex_mono_12), skin, "(");
+        it.print(24 * 7, 10 * 14, id(plex_mono_12), skin, ")");
+
+        // Eye saccade — small jumps every ~1.8s, brief 15% of cycle.
+        uint32_t sac_seed = (uint32_t)(bhumi_now_ms / 1800UL);
+        uint32_t sh = sac_seed * 2654435761u;
+        int eye_dx = 0, eye_dy = 0;
+        float sac_phase = (float)(bhumi_now_ms % 1800UL) / 1800.0f;
+        if (id(activity_mode) == std::string("speaking")) {
+          eye_dx = 0; eye_dy = 0;
+        } else if (sac_phase <= 0.15f) {
+          if (id(attention_mode) == std::string("outward")) {
+            eye_dx = (sh & 1) ? 1 : -1;
+          } else {
+            eye_dx = (int)((sh >> 4) % 3u) - 1;
+            eye_dy = (int)((sh >> 8) % 3u) - 1;
+          }
+        }
+        it.print((21 + eye_dx) * 7, (11 + eye_dy) * 14, id(plex_mono_12),
+                 eyes, "o");
+        it.print((23 + eye_dx) * 7, (11 + eye_dy) * 14, id(plex_mono_12),
+                 eyes, "o");
+
+        // Heart — beats with same period as wordmark breath (4000ms).
+        float ub = sinf(((float)(bhumi_now_ms % 4000UL) / 4000.0f) * 6.2831853f);
+        float pulse = (ub + 1.0f) * 0.5f;
+        float hb = 0.55f + pulse * 0.45f;
+        float hr_f = (float)tr * 1.3f * hb;
+        float hg_f = (float)tg * 1.3f * hb;
+        float hb_f = (float)tb * 1.3f * hb;
+        if (hr_f > 255.0f) hr_f = 255.0f;
+        if (hg_f > 255.0f) hg_f = 255.0f;
+        if (hb_f > 255.0f) hb_f = 255.0f;
+        Color heart_color((uint8_t)hr_f, (uint8_t)hg_f, (uint8_t)hb_f);
+        const char* heart_glyph = (pulse > 0.7f) ? "*" : "+";
+        it.print(22 * 7, 12 * 14, id(plex_mono_12), heart_color, heart_glyph);
+
+        // Console glints along bottom row.
+        Color dot_color(0x40, 0x4A, 0x55);
+        Color dot_glint(0x90, 0xA0, 0xC0);
+        uint32_t glint_id = (uint32_t)(bhumi_now_ms / 2000UL);
+        uint32_t glint_h = glint_id * 2654435761u;
+        int glint_col = (int)(glint_h % 44u);
+        for (int col = 2; col < 42; col += 3) {
+          Color c = (col == glint_col) ? dot_glint : dot_color;
+          const char* g = (col & 1) ? "." : ".";
+          it.print(col * 7, 14 * 14, id(plex_mono_12), c, g);
         }
         return;
       }

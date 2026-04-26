@@ -123,9 +123,118 @@ class State:
     lightning: bool = False
     tree_species: str = "pine"   # "pine" | "oak" | "mixed"
     ufo_mode: str = "grey"        # "grey" | "mood" | "outline"
+    bhumi: str = "landscape"      # "landscape" | "ufo_interior"
 
 
 def render(state: State) -> Image.Image:
+    if state.bhumi == "ufo_interior":
+        return _render_ufo_interior(state)
+    return _render_landscape(state)
+
+
+def _render_ufo_interior(state: State) -> Image.Image:
+    """Inside-the-saucer view. Dark cockpit, porthole onto the sky,
+    alien-Narada with beating heart + eyes."""
+    img = Image.new("RGB", (SCREEN_W, SCREEN_H))
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype(str(FONT_DIR / "IBMPlexMono-Regular.ttf"), 12)
+    now_ms = state.now_ms
+
+    # Cockpit walls — dark blue-grey, not pure black so contrast lives.
+    cockpit = (0x15, 0x18, 0x20)
+    draw.rectangle((0, 0, SCREEN_W, SCREEN_H), fill=cockpit)
+
+    # Porthole — circle showing the outside sky. Center at (160, 70),
+    # radius 60 px.
+    px, py, pr = 160, 72, 60
+    sky = _sky_color(state.hour, state.lightning)
+    draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=sky)
+    # Porthole rim — medium grey ring.
+    rim = (0x60, 0x65, 0x70)
+    for w in range(2):
+        draw.ellipse((px - pr - w, py - pr - w, px + pr + w, py + pr + w),
+                     outline=rim)
+    # Stars through the porthole (night, clear) — pick the few that fall
+    # inside the circle.
+    is_day = (state.hour >= 6.0 and state.hour < 18.0)
+    if (not is_day) and state.cloud_pct < 50.0:
+        for sx, sy, phase in STARS:
+            sx_px = sx * CELL_W + CELL_W // 2
+            sy_px = sy * CELL_H + CELL_H // 2
+            if (sx_px - px) ** 2 + (sy_px - py) ** 2 > (pr - 6) ** 2:
+                continue
+            b = (math.sin(now_ms / 700.0 + phase) + 1.0) * 0.5
+            if b > 0.65:
+                draw.text((sx_px, sy_px), "*", font=font,
+                          fill=(0xD4, 0xCC, 0xB8), anchor="mm")
+    # Sun/moon through the porthole.
+    if is_day:
+        t_day = (state.hour - 6.0) / 12.0
+        sun_x = int(t_day * (COLS - 1))
+        sun_y = max(1, int(round(6.0 - math.sin(math.pi * t_day) * 6.0)))
+        cx_px = sun_x * CELL_W + CELL_W // 2
+        cy_px = sun_y * CELL_H + CELL_H // 2
+        if (cx_px - px) ** 2 + (cy_px - py) ** 2 < (pr - 8) ** 2:
+            draw.ellipse((cx_px - 6, cy_px - 6, cx_px + 6, cy_px + 6),
+                         fill=(0xF4, 0xD0, 0x60))
+
+    # Mood tint for accent.
+    tint = _bilinear_tint(state.mood_valence, state.mood_arousal)
+
+    def put(col, row, color, ch):
+        if col < 0 or col >= COLS or row < 0 or row >= ROWS:
+            return
+        draw.text((col * CELL_W, row * CELL_H), ch, font=font, fill=color)
+
+    # Alien Narada — centered, ~3 cells tall.
+    skin = (0x90, 0xA8, 0x70)
+    eyes = (0xE0, 0xE4, 0xEA)
+    # Head outline (subtle bracket pair above eyes).
+    put(20, 10, skin, "(")
+    put(24, 10, skin, ")")
+    # Eyes — saccade direction based on attention; locked center when speaking.
+    saccade_seed = int(now_ms / 1800.0)
+    sh = (saccade_seed * 2654435761) & 0xFFFFFFFF
+    if state.attention_mode == "outward":
+        eye_dx, eye_dy = 1 if (sh & 1) else -1, 0
+    elif state.activity_mode if hasattr(state, "activity_mode") else False:
+        eye_dx, eye_dy = 0, 0
+    else:
+        eye_dx = ((sh >> 4) % 3) - 1
+        eye_dy = ((sh >> 8) % 3) - 1
+    # Brief saccade window — eyes only "move" briefly within their cycle.
+    saccade_phase = (now_ms % 1800) / 1800.0
+    if saccade_phase > 0.15:
+        eye_dx = 0
+        eye_dy = 0
+    put(21 + eye_dx, 11 + eye_dy, eyes, "o")
+    put(23 + eye_dx, 11 + eye_dy, eyes, "o")
+
+    # Heart — beats at the wordmark breath period (4000ms). Brightness
+    # peaks on in-breath, dims on out-breath. Mood-tinted.
+    breath = math.sin((now_ms % 4000.0) / 4000.0 * 2 * math.pi)
+    pulse = (breath + 1.0) * 0.5      # 0..1
+    heart_brightness = 0.55 + pulse * 0.45
+    heart_color = tuple(_clamp(int(c * 1.3 * heart_brightness), 0, 255)
+                        for c in tint)
+    heart_glyph = "*" if pulse > 0.7 else "+"
+    put(22, 12, heart_color, heart_glyph)
+
+    # Console dots along bottom rows — subtle instrument backlight.
+    dot_color = (0x40, 0x4A, 0x55)
+    glint_id = int(now_ms / 2000.0)
+    glint_h = (glint_id * 2654435761) & 0xFFFFFFFF
+    glint_col = glint_h % COLS
+    for col in range(2, COLS - 2, 3):
+        c = dot_color
+        if col == glint_col:
+            c = tuple(_clamp(int(v * 2.2), 0, 255) for v in c)
+        put(col, 14, c, "·" if (col & 1) else ".")
+
+    return img
+
+
+def _render_landscape(state: State) -> Image.Image:
     img = Image.new("RGB", (SCREEN_W, SCREEN_H))
     draw = ImageDraw.Draw(img)
     font = ImageFont.truetype(str(FONT_DIR / "IBMPlexMono-Regular.ttf"), 12)
@@ -656,6 +765,8 @@ def main():
                    choices=["pine", "oak", "mixed"])
     p.add_argument("--ufo-mode", default="grey",
                    choices=["grey", "mood", "outline"])
+    p.add_argument("--bhumi", default="landscape",
+                   choices=["landscape", "ufo_interior"])
     p.add_argument("--anim-ms", type=float, default=None,
                    help="Animation timestamp (default: real time)")
     p.add_argument("--live", action="store_true",
@@ -666,6 +777,7 @@ def main():
         s = _live_state()
         s.tree_species = args.tree_species
         s.ufo_mode = args.ufo_mode
+        s.bhumi = args.bhumi
     else:
         s = State(
             mood_valence=args.mood_valence,
@@ -679,6 +791,7 @@ def main():
             lightning=args.lightning,
             tree_species=args.tree_species,
             ufo_mode=args.ufo_mode,
+            bhumi=args.bhumi,
         )
 
     if args.hour is None:
