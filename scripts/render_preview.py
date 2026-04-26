@@ -147,6 +147,13 @@ def render(state: State) -> Image.Image:
     else:
         day_f = 0.0
     grass = tuple(int(night[i] + (day[i] - night[i]) * day_f) for i in range(3))
+    # Cycle 2.24 — cloud shadow on the foreground. When sky is overcast,
+    # the grass band and everything sitting on it dims. Effect ramps from
+    # 0% at cloud_pct=50 to ~18% at cloud_pct=100.
+    shadow_strength = max(0.0, (state.cloud_pct - 50.0) / 50.0) * 0.18
+    shade = lambda c: tuple(int(v * (1.0 - shadow_strength)) for v in c)
+    if shadow_strength > 0.0:
+        grass = shade(grass)
     draw.rectangle((0, 0, SCREEN_W, HORIZON_ROW * CELL_H), fill=sky)
     draw.rectangle((0, HORIZON_ROW * CELL_H, SCREEN_W, SCREEN_H), fill=grass)
 
@@ -288,25 +295,25 @@ def render(state: State) -> Image.Image:
                 # Flattened — a few blades still leaning, most pressed flat.
                 if wv > 0.40:    g = lean_glyph
                 else:             g = "_"
-            put(col, row, (0x46, 0x60, 0x32), g)
+            put(col, row, shade((0x46, 0x60, 0x32)), g)
 
     # Trees — three planes, triangular crowns.
     plane_blend = [0.65, 0.35, 0.0]
     plane_sway  = [0.0,  0.6,  1.0]
     sway_amp = _clamp(state.wind_kmh / 25.0, 0.0, 3.0)
     foliage_body_pal = [
-        (0x4A, 0x68, 0x28),
-        (0x68, 0x78, 0x30),
-        (0x38, 0x5A, 0x28),
-        (0x58, 0x6E, 0x38),
+        shade((0x4A, 0x68, 0x28)),
+        shade((0x68, 0x78, 0x30)),
+        shade((0x38, 0x5A, 0x28)),
+        shade((0x58, 0x6E, 0x38)),
     ]
     foliage_hi_pal = [
-        (0x8A, 0xA8, 0x58),
-        (0xA0, 0xB0, 0x48),
-        (0x70, 0x9A, 0x48),
-        (0x9A, 0xB0, 0x68),
+        shade((0x8A, 0xA8, 0x58)),
+        shade((0xA0, 0xB0, 0x48)),
+        shade((0x70, 0x9A, 0x48)),
+        shade((0x9A, 0xB0, 0x68)),
     ]
-    trunk_base = (0x3C, 0x28, 0x18)
+    trunk_base = shade((0x3C, 0x28, 0x18))
     for t in range(N_TREES):
         p = T_PLANE[t]
         base_col = T_COLS[t]

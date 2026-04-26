@@ -776,10 +776,19 @@ display:
       if (hour_of_day >= 8.0f && hour_of_day < 16.0f)        day_f = 1.0f;
       else if (hour_of_day >= 5.0f && hour_of_day < 8.0f)    day_f = (hour_of_day - 5.0f) / 3.0f;
       else if (hour_of_day >= 16.0f && hour_of_day < 19.0f)  day_f = 1.0f - (hour_of_day - 16.0f) / 3.0f;
+      uint8_t gr_base = (uint8_t)(gr_n + (gr_d - gr_n) * day_f);
+      uint8_t gg_base = (uint8_t)(gg_n + (gg_d - gg_n) * day_f);
+      uint8_t gb_base = (uint8_t)(gb_n + (gb_d - gb_n) * day_f);
+      // Cycle 2.24 — cloud shadow on the foreground. When sky is overcast,
+      // the grass band and everything sitting on it dims. shadow_strength
+      // ramps from 0% at cloud_pct=50 to ~18% at cloud_pct=100.
+      float shadow_strength = (cloud_pct - 50.0f) / 50.0f * 0.18f;
+      if (shadow_strength < 0.0f) shadow_strength = 0.0f;
+      float shadow_factor = 1.0f - shadow_strength;
       Color grass_bg(
-        (uint8_t)(gr_n + (gr_d - gr_n) * day_f),
-        (uint8_t)(gg_n + (gg_d - gg_n) * day_f),
-        (uint8_t)(gb_n + (gb_d - gb_n) * day_f)
+        (uint8_t)(gr_base * shadow_factor),
+        (uint8_t)(gg_base * shadow_factor),
+        (uint8_t)(gb_base * shadow_factor)
       );
       it.fill(sky_bg);
       it.filled_rectangle(0, HORIZON_ROW * CELL_H,
@@ -802,8 +811,14 @@ display:
       Color cloud_clear(0xE8, 0xEC, 0xF0);
       Color cloud_rain(0x5A, 0x60, 0x68);
       Color rain_color(0x6A, 0x90, 0xA8);
-      Color trunk_color(0x55, 0x38, 0x20);
-      Color grass_blade(0x46, 0x60, 0x32);
+      Color trunk_color(
+        (uint8_t)(0x55 * shadow_factor),
+        (uint8_t)(0x38 * shadow_factor),
+        (uint8_t)(0x20 * shadow_factor));
+      Color grass_blade(
+        (uint8_t)(0x46 * shadow_factor),
+        (uint8_t)(0x60 * shadow_factor),
+        (uint8_t)(0x32 * shadow_factor));
 
       // Sky: stars (night only, not overcast), sun (day), moon (night).
       if (!is_day && cloud_pct < 50.0f) {
@@ -1039,7 +1054,10 @@ display:
         { 0x70, 0x9A, 0x48 },
         { 0x9A, 0xB0, 0x68 },
       };
-      Color trunk_body_base(0x3C, 0x28, 0x18);
+      Color trunk_body_base(
+        (uint8_t)(0x3C * shadow_factor),
+        (uint8_t)(0x28 * shadow_factor),
+        (uint8_t)(0x18 * shadow_factor));
       for (int t = 0; t < N_TREES; t++) {
         int p        = tree_plane[t];
         int base_col = tree_col[t];
@@ -1047,11 +1065,12 @@ display:
         int cw       = tree_crown_w[t];
         float pb = plane_blend[p];
         // Per-tree foliage colors from the palette (cycled by index).
+        // Cycle 2.24: shadow_factor dims the palette entries when overcast.
         const uint8_t* hi_rgb = foliage_hi_pal[t & 3];
         Color tree_color(
-          (uint8_t)((float)hi_rgb[0] * (1.0f - pb) + (float)grass_bg.r * pb),
-          (uint8_t)((float)hi_rgb[1] * (1.0f - pb) + (float)grass_bg.g * pb),
-          (uint8_t)((float)hi_rgb[2] * (1.0f - pb) + (float)grass_bg.b * pb)
+          (uint8_t)((float)hi_rgb[0] * shadow_factor * (1.0f - pb) + (float)grass_bg.r * pb),
+          (uint8_t)((float)hi_rgb[1] * shadow_factor * (1.0f - pb) + (float)grass_bg.g * pb),
+          (uint8_t)((float)hi_rgb[2] * shadow_factor * (1.0f - pb) + (float)grass_bg.b * pb)
         );
         Color this_trunk(
           (uint8_t)((float)trunk_color.r * (1.0f - pb) + 0x10 * pb),
@@ -1107,9 +1126,9 @@ display:
         // glyphs will sit on top in a brighter shade.
         const uint8_t* body_rgb = foliage_body_pal[t & 3];
         Color foliage_body(
-          (uint8_t)((float)body_rgb[0] * (1.0f - pb) + (float)grass_bg.r * pb),
-          (uint8_t)((float)body_rgb[1] * (1.0f - pb) + (float)grass_bg.g * pb),
-          (uint8_t)((float)body_rgb[2] * (1.0f - pb) + (float)grass_bg.b * pb)
+          (uint8_t)((float)body_rgb[0] * shadow_factor * (1.0f - pb) + (float)grass_bg.r * pb),
+          (uint8_t)((float)body_rgb[1] * shadow_factor * (1.0f - pb) + (float)grass_bg.g * pb),
+          (uint8_t)((float)body_rgb[2] * shadow_factor * (1.0f - pb) + (float)grass_bg.b * pb)
         );
 
         // Trunk body fill — narrow brown rectangle behind the glyphs.
