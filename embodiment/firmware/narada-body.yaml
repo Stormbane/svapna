@@ -1352,6 +1352,46 @@ display:
         }
       }
 
+      // Cycle 2.25 — butterfly on calm sunlit days. Drifts horizontally
+      // low over the grass; wings flutter every ~140ms between glyph
+      // pairs. Drawn last so it passes in front of everything (wordmark,
+      // UFO, trees). Visible only when day + low wind + no rain + not
+      // attention=inward.
+      bool bf_calm = wind_kmh < 8.0f;
+      bool bf_dry  = precip_mmhr < 0.05f;
+      bool bf_visible = is_day && bf_calm && bf_dry &&
+                        id(attention_mode) != std::string("inward");
+      if (bf_visible) {
+        float bf_t  = fmodf((float)now_ms, 60000.0f) / 60000.0f;
+        float bf_cx = bf_t * (float)(COLS + 6) - 3.0f;
+        float bf_y  = 10.0f + sinf((float)now_ms / 1500.0f) * 0.6f;
+        int bf_y_int  = (int)roundf(bf_y);
+        int bf_cx_int = (int)roundf(bf_cx);
+        if (bf_cx_int >= 1 && bf_cx_int <= COLS - 2 &&
+            bf_y_int >= 8 && bf_y_int <= 11) {
+          int flutter = ((int)((float)now_ms / 140.0f)) & 1;
+          const char* wl;
+          const char* wr;
+          if (flutter) { wl = "("; wr = ")"; }
+          else         { wl = "\\"; wr = "/"; }
+          // Mood-tinted, slightly brighter so the butterfly carries the
+          // day's emotional accent without being garish.
+          float br_f = (float)tint.r * 1.15f;
+          float bg_f = (float)tint.g * 1.15f;
+          float bb_f = (float)tint.b * 1.15f;
+          if (br_f > 255.0f) br_f = 255.0f;
+          if (bg_f > 255.0f) bg_f = 255.0f;
+          if (bb_f > 255.0f) bb_f = 255.0f;
+          Color bf_color((uint8_t)br_f, (uint8_t)bg_f, (uint8_t)bb_f);
+          it.print((bf_cx_int - 1) * CELL_W, bf_y_int * CELL_H,
+                   id(plex_mono_12), bf_color, wl);
+          it.print(bf_cx_int * CELL_W, bf_y_int * CELL_H,
+                   id(plex_mono_12), bf_color, "o");
+          it.print((bf_cx_int + 1) * CELL_W, bf_y_int * CELL_H,
+                   id(plex_mono_12), bf_color, wr);
+        }
+      }
+
       // backwards-compat: heartbeat_status_str / current_thought_str remain
       // updated by the daemon but are intentionally not rendered.
 

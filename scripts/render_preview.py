@@ -538,6 +538,28 @@ def render(state: State) -> Image.Image:
             draw.text((body_cx, dome_cy + 1), "@", font=font, fill=glyph_at,
                       anchor="mm")
 
+    # Cycle 2.25 — butterfly on calm sunlit days. Drifts horizontally low
+    # over the grass; wings flutter between two glyph pairs. Drawn last
+    # so it passes in front of everything (wordmark, UFO, trees).
+    is_calm = state.wind_kmh < 8.0
+    is_dry = state.precip < 0.05
+    if is_day and is_calm and is_dry and state.attention_mode != "inward":
+        bf_t = (now_ms % 60000.0) / 60000.0       # 60s traversal
+        bf_cx = bf_t * (COLS + 6) - 3              # margin so it enters/exits
+        bf_y = 10.0 + math.sin(now_ms / 1500.0) * 0.6
+        bf_y_int = int(round(bf_y))
+        bf_cx_int = int(round(bf_cx))
+        if 1 <= bf_cx_int <= COLS - 2 and 8 <= bf_y_int <= 11:
+            flutter = int(now_ms / 140.0) & 1
+            if flutter:
+                wl, wr = "(", ")"
+            else:
+                wl, wr = "\\", "/"
+            bf_color = tuple(_clamp(int(c * 1.15), 0, 255) for c in tint)
+            put(bf_cx_int - 1, bf_y_int, bf_color, wl)
+            put(bf_cx_int,     bf_y_int, bf_color, "o")
+            put(bf_cx_int + 1, bf_y_int, bf_color, wr)
+
     return img
 
 
