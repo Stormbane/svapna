@@ -24,8 +24,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from svapna.body.expression import ExpressionClient
-from svapna.body.weather import fetch_kallangur_weather
+from svapna.indriyas.karmendriyas.drishti.expression import ExpressionClient
+from svapna.indriyas.jnanendriyas.tvac.weather import fetch_kallangur_weather
 from svapna.heartbeat.cycle_log import CycleRecord, latest_started, write_cycle
 from svapna.heartbeat.delegate import ClaudeDelegate
 from svapna.heartbeat.display import DisplayClient

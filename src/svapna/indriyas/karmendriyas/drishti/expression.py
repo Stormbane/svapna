@@ -1,7 +1,7 @@
 """ExpressionClient — write the v1.0 expression contract to the body.
 
 See `embodiment/design/v1.0-architecture.md` for the layer model.
-See `svapna.body.layers` for the data classes.
+See `svapna.indriyas.karmendriyas.drishti.layers` for the data classes.
 
 Stateless by design: every call opens a fresh APIClient and a fresh asyncio
 loop, mirroring `svapna.heartbeat.display.DisplayClient`. The asyncio
@@ -19,7 +19,7 @@ import logging
 
 from aioesphomeapi import APIClient
 
-from svapna.body.layers import (
+from svapna.indriyas.karmendriyas.drishti.layers import (
     Activity,
     ActivityMode,
     Attention,

@@ -15,8 +15,8 @@ import argparse
 import logging
 import sys
 
-from svapna.body.expression import ExpressionClient, DEFAULT_DEVICE_IP
-from svapna.body.weather import fetch_kallangur_weather
+from svapna.indriyas.karmendriyas.drishti.expression import ExpressionClient, DEFAULT_DEVICE_IP
+from svapna.indriyas.jnanendriyas.tvac.weather import fetch_kallangur_weather
 
 logging.basicConfig(
     level=logging.INFO,

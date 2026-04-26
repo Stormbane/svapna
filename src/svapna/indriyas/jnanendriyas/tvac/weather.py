@@ -13,7 +13,7 @@ import logging
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from svapna.body.layers import Weather
+from svapna.indriyas.karmendriyas.drishti.layers import Weather
 
 logger = logging.getLogger(__name__)
 

@@ -17,9 +17,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from svapna.body.client import BodyClient, DEFAULT_DEVICE_IP
+from svapna.indriyas.jnanendriyas.proprioception import BodyClient, DEFAULT_DEVICE_IP
 
-FIRMWARE_DIR = Path("firmware/esphome")
+FIRMWARE_DIR = Path("embodiment/firmware")
 FIRMWARE_YAML = "narada-body.yaml"
 
 
