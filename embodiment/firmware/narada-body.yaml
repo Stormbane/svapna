@@ -1,12 +1,104 @@
 esphome:
   name: narada
   friendly_name: "Narada"
+  on_boot:
+    # Cycle 2.22 — allocate the live-frame-push buffer in PSRAM and
+    # spawn the TCP listener task on port 6060. Defaults: mode OFF,
+    # so the native display lambda runs unchanged until cognition
+    # calls set_remote_frame_mode(true).
+    priority: -100
+    then:
+      - lambda: |-
+          static const size_t FRAME_BYTES = 320 * 240 * 2;
+          id(remote_frame_buffer) = (uint8_t*)heap_caps_malloc(
+              FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+          if (id(remote_frame_buffer) == nullptr) {
+            ESP_LOGW("frame", "PSRAM alloc failed, trying internal heap");
+            id(remote_frame_buffer) = (uint8_t*)heap_caps_malloc(
+                FRAME_BYTES, MALLOC_CAP_8BIT);
+          }
+          if (id(remote_frame_buffer) == nullptr) {
+            ESP_LOGE("frame", "framebuffer alloc failed (need %u bytes)",
+                     (unsigned)FRAME_BYTES);
+            return;
+          }
+          memset(id(remote_frame_buffer), 0, FRAME_BYTES);
+          ESP_LOGI("frame", "framebuffer ready at %p (%u bytes)",
+                   id(remote_frame_buffer), (unsigned)FRAME_BYTES);
+
+          xTaskCreate([](void*) {
+            static const size_t FB_BYTES = 320 * 240 * 2;
+            int srv = ::socket(AF_INET, SOCK_STREAM, 0);
+            if (srv < 0) {
+              ESP_LOGE("frame", "socket() failed");
+              vTaskDelete(nullptr);
+              return;
+            }
+            int one = 1;
+            ::setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+            struct sockaddr_in addr = {};
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(6060);
+            addr.sin_addr.s_addr = htonl(INADDR_ANY);
+            if (::bind(srv, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+              ESP_LOGE("frame", "bind(:6060) failed");
+              ::close(srv);
+              vTaskDelete(nullptr);
+              return;
+            }
+            if (::listen(srv, 1) < 0) {
+              ESP_LOGE("frame", "listen() failed");
+              ::close(srv);
+              vTaskDelete(nullptr);
+              return;
+            }
+            ESP_LOGI("frame", "TCP listener up on :6060");
+            while (true) {
+              struct sockaddr_in cli_addr;
+              socklen_t cli_len = sizeof(cli_addr);
+              int cli = ::accept(srv, (struct sockaddr*)&cli_addr, &cli_len);
+              if (cli < 0) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+                continue;
+              }
+              if (id(remote_frame_buffer) == nullptr) {
+                ::close(cli);
+                continue;
+              }
+              size_t total = 0;
+              uint32_t deadline = millis() + 5000;
+              while (total < FB_BYTES && (int32_t)(deadline - millis()) > 0) {
+                int n = ::recv(cli, id(remote_frame_buffer) + total,
+                               FB_BYTES - total, 0);
+                if (n > 0) {
+                  total += (size_t)n;
+                } else if (n == 0) {
+                  break;
+                } else {
+                  break;
+                }
+              }
+              ::close(cli);
+              if (total == FB_BYTES) {
+                ESP_LOGD("frame", "frame received");
+              } else {
+                ESP_LOGW("frame", "short frame: %u/%u bytes",
+                         (unsigned)total, (unsigned)FB_BYTES);
+              }
+            }
+          }, "fb_rx", 4096, nullptr, 1, nullptr);
 
 esp32:
   board: esp32-s3-devkitc-1
   variant: esp32s3
   framework:
     type: arduino
+
+# Cycle 2.22 — enable PSRAM so the live-frame-push buffer (153,600 bytes)
+# can sit outside internal SRAM. ESP32-S3-BOX-3 has octal PSRAM @ 80MHz.
+psram:
+  mode: octal
+  speed: 80MHz
 
 logger:
   level: INFO
@@ -211,6 +303,18 @@ api:
             id(weather_code) = wcode;
             id(weather_temperature_c) = temp_c;
 
+    # --- Cycle 2.22 — live frame push toggle ---
+    # When enabled, the display lambda blits id(remote_frame_buffer)
+    # instead of running the native scene engine. The buffer is filled
+    # by the TCP listener spawned in on_boot.
+    - service: set_remote_frame_mode
+      variables:
+        enabled: bool
+      then:
+        - lambda: |-
+            id(remote_frame_active) = enabled;
+            ESP_LOGI("frame", "remote_frame_active = %d", (int)enabled);
+
 time:
   - platform: sntp
     id: sntp_time
@@ -233,6 +337,14 @@ interval:
           }
 
 globals:
+  # --- Cycle 2.22 — live frame push ---
+  - id: remote_frame_active
+    type: bool
+    initial_value: 'false'
+  - id: remote_frame_buffer
+    type: uint8_t*
+    initial_value: 'nullptr'
+
   # --- backwards-compat globals (remove after Cycle 2 once daemon migrates) ---
   - id: heartbeat_status_str
     type: std::string
@@ -351,6 +463,26 @@ display:
     invert_colors: false
     update_interval: 100ms
     lambda: |-
+      // ===================================================================
+      // CYCLE 2.22 — live frame push override. When remote_frame_active is
+      // true and the framebuffer is allocated, blit it directly and skip
+      // the native scene engine. Toggle via API service set_remote_frame_mode.
+      // ===================================================================
+      if (id(remote_frame_active) && id(remote_frame_buffer) != nullptr) {
+        const uint8_t *buf = id(remote_frame_buffer);
+        for (int y = 0; y < 240; y++) {
+          for (int x = 0; x < 320; x++) {
+            int i = (y * 320 + x) * 2;
+            uint16_t p = ((uint16_t)buf[i] << 8) | buf[i + 1];
+            uint8_t r = (p >> 8) & 0xF8;
+            uint8_t g = (p >> 3) & 0xFC;
+            uint8_t b = (p << 3) & 0xF8;
+            it.draw_pixel_at(x, y, Color(r, g, b));
+          }
+        }
+        return;
+      }
+
       // ===================================================================
       // CYCLE 2.6 — `horizon` engine, weather-aware. ASCII-only vocabulary.
       // The body lives in Kallangur, QLD. Cognition pushes Open-Meteo data
