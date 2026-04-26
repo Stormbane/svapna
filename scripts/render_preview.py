@@ -177,6 +177,34 @@ def render(state: State) -> Image.Image:
 
     # Stars at night (cloud_pct < 50%).
     if (not is_day) and state.cloud_pct < 50.0:
+        # Cycle 2.26 — shooting star. Each 30s window has a ~30% chance
+        # of a meteor flashing diagonally across the sky for ~800ms.
+        # Trajectory + timing seeded from the window index, so renders
+        # are deterministic across refreshes within a window.
+        win_id = int(now_ms / 30000.0)
+        h = (win_id * 2654435761) & 0xFFFFFFFF
+        if (h % 100) < 30:
+            fire_ms = (h >> 8) % 25000
+            elapsed = (now_ms % 30000) - fire_ms
+            if 0 <= elapsed <= 800:
+                p = elapsed / 800.0
+                start_col = 30 + ((h >> 16) % 10)   # right side
+                start_row = ((h >> 24) % 4)          # top band
+                end_col = 4
+                end_row = 6
+                cur_c = start_col + (end_col - start_col) * p
+                cur_r = start_row + (end_row - start_row) * p
+                # Head + 3-glyph fading tail
+                head_color = (0xF8, 0xF4, 0xD8)
+                put(int(round(cur_c)), int(round(cur_r)), head_color, "*")
+                for i in range(1, 4):
+                    tp = max(0.0, p - i * 0.06)
+                    tc = start_col + (end_col - start_col) * tp
+                    tr = start_row + (end_row - start_row) * tp
+                    fade = 1.0 - i * 0.28
+                    tail_color = tuple(int(c * fade) for c in head_color)
+                    glyph = "-" if i == 1 else "."
+                    put(int(round(tc)), int(round(tr)), tail_color, glyph)
         for sx, sy, phase in STARS:
             b = (math.sin(now_ms / 700.0 + phase) + 1.0) * 0.5
             if b > 0.65:    g = "*"
