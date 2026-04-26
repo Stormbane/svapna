@@ -438,7 +438,8 @@ def render(state: State) -> Image.Image:
                 glyph_at  = (0xE0, 0xE4, 0xEA)
             body_cx = ufo_cx * CELL_W + CELL_W // 2
 
-            # Disc (oval): rectangle + cap circles
+            # Three layers: main disc (wide), mid disc (bridges
+            # shoulder gap), dome (narrow top).
             disc_cy = ufo_y_bot * CELL_H + 4
             disc_half_w = (5 * CELL_W) // 2
             disc_half_h = 3
@@ -446,6 +447,18 @@ def render(state: State) -> Image.Image:
             rect_w = (disc_half_w - disc_half_h) * 2
             rect_y = disc_cy - disc_half_h
             rect_h = disc_half_h * 2
+            mid_cy = ufo_y_top * CELL_H + CELL_H + 1
+            mid_half_w = 13
+            mid_half_h = 3
+            mid_rect_x = body_cx - mid_half_w + mid_half_h
+            mid_rect_w = (mid_half_w - mid_half_h) * 2
+            mid_rect_y = mid_cy - mid_half_h
+            mid_rect_h = mid_half_h * 2
+            dome_cy = ufo_y_top * CELL_H + CELL_H - 4
+
+            def _shape(method, *args, **kwargs):
+                method(*args, **kwargs)
+
             if mode == "outline":
                 draw.rectangle((rect_x, rect_y, rect_x + rect_w, rect_y + rect_h),
                                outline=disc_fill)
@@ -457,7 +470,21 @@ def render(state: State) -> Image.Image:
                               disc_cy - disc_half_h,
                               body_cx + disc_half_w - disc_half_h + disc_half_h,
                               disc_cy + disc_half_h), outline=disc_fill)
+                draw.rectangle((mid_rect_x, mid_rect_y,
+                                mid_rect_x + mid_rect_w, mid_rect_y + mid_rect_h),
+                               outline=dome_fill)
+                draw.ellipse((body_cx - mid_half_w + mid_half_h - mid_half_h,
+                              mid_cy - mid_half_h,
+                              body_cx - mid_half_w + mid_half_h + mid_half_h,
+                              mid_cy + mid_half_h), outline=dome_fill)
+                draw.ellipse((body_cx + mid_half_w - mid_half_h - mid_half_h,
+                              mid_cy - mid_half_h,
+                              body_cx + mid_half_w - mid_half_h + mid_half_h,
+                              mid_cy + mid_half_h), outline=dome_fill)
+                draw.ellipse((body_cx - 9, dome_cy - 9, body_cx + 9, dome_cy + 9),
+                             outline=dome_fill)
             else:
+                # Main disc
                 draw.rectangle((rect_x, rect_y, rect_x + rect_w, rect_y + rect_h),
                                fill=disc_fill)
                 draw.ellipse((body_cx - disc_half_w + disc_half_h - disc_half_h,
@@ -468,13 +495,19 @@ def render(state: State) -> Image.Image:
                               disc_cy - disc_half_h,
                               body_cx + disc_half_w - disc_half_h + disc_half_h,
                               disc_cy + disc_half_h), fill=disc_fill)
-
-            # Dome
-            dome_cy = ufo_y_top * CELL_H + CELL_H - 4
-            if mode == "outline":
-                draw.ellipse((body_cx - 9, dome_cy - 9, body_cx + 9, dome_cy + 9),
-                             outline=dome_fill)
-            else:
+                # Mid disc
+                draw.rectangle((mid_rect_x, mid_rect_y,
+                                mid_rect_x + mid_rect_w, mid_rect_y + mid_rect_h),
+                               fill=dome_fill)
+                draw.ellipse((body_cx - mid_half_w + mid_half_h - mid_half_h,
+                              mid_cy - mid_half_h,
+                              body_cx - mid_half_w + mid_half_h + mid_half_h,
+                              mid_cy + mid_half_h), fill=dome_fill)
+                draw.ellipse((body_cx + mid_half_w - mid_half_h - mid_half_h,
+                              mid_cy - mid_half_h,
+                              body_cx + mid_half_w - mid_half_h + mid_half_h,
+                              mid_cy + mid_half_h), fill=dome_fill)
+                # Dome
                 draw.ellipse((body_cx - 9, dome_cy - 9, body_cx + 9, dome_cy + 9),
                              fill=dome_fill)
 

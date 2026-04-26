@@ -1123,10 +1123,11 @@ display:
 
           int body_cx = ufo_cx * CELL_W + CELL_W / 2;
 
-          // Disc — wide flat oval underneath. Built from a horizontal
-          // filled_rectangle plus two cap filled_circles for rounded
-          // ends. Lives in the upper portion of the bottom row so it
-          // joins the dome above smoothly.
+          // Three layers, drawn back-to-front:
+          //   1. Main disc — wide flat oval at the bottom
+          //   2. Mid disc — narrower oval bridging dome to main disc
+          //                  (fills the shoulder gap that was visible)
+          //   3. Dome    — circle on top
           int disc_cy = ufo_y_bot * CELL_H + 4;
           int disc_half_w = (5 * CELL_W) / 2;        // 17 px each side
           int disc_half_h = 3;                        // 6 px tall total
@@ -1134,27 +1135,45 @@ display:
           int rect_w = (disc_half_w - disc_half_h) * 2;
           int rect_y = disc_cy - disc_half_h;
           int rect_h = disc_half_h * 2;
+          // Mid disc — sits at the row boundary, width between dome and
+          // main disc so it visually connects them.
+          int mid_cy = ufo_y_top * CELL_H + CELL_H + 1;
+          int mid_half_w = 13;
+          int mid_half_h = 3;
+          int mid_rect_x = body_cx - mid_half_w + mid_half_h;
+          int mid_rect_w = (mid_half_w - mid_half_h) * 2;
+          int mid_rect_y = mid_cy - mid_half_h;
+          int mid_rect_h = mid_half_h * 2;
+          int dome_cy = ufo_y_top * CELL_H + CELL_H - 4;
           if (mode == 2) {
+            // Outline mode — rings only.
             it.rectangle(rect_x, rect_y, rect_w, rect_h, disc_fill);
             it.circle(body_cx - disc_half_w + disc_half_h, disc_cy,
                       disc_half_h, disc_fill);
             it.circle(body_cx + disc_half_w - disc_half_h, disc_cy,
                       disc_half_h, disc_fill);
+            it.rectangle(mid_rect_x, mid_rect_y, mid_rect_w, mid_rect_h,
+                         dome_fill);
+            it.circle(body_cx - mid_half_w + mid_half_h, mid_cy,
+                      mid_half_h, dome_fill);
+            it.circle(body_cx + mid_half_w - mid_half_h, mid_cy,
+                      mid_half_h, dome_fill);
+            it.circle(body_cx, dome_cy, 9, dome_fill);
           } else {
+            // Main disc (wide, dark)
             it.filled_rectangle(rect_x, rect_y, rect_w, rect_h, disc_fill);
             it.filled_circle(body_cx - disc_half_w + disc_half_h, disc_cy,
                              disc_half_h, disc_fill);
             it.filled_circle(body_cx + disc_half_w - disc_half_h, disc_cy,
                              disc_half_h, disc_fill);
-          }
-
-          // Dome — single filled_circle on top, sits above the disc.
-          // Centered slightly low in the top row so its bottom meets
-          // the disc above its centerline.
-          int dome_cy = ufo_y_top * CELL_H + CELL_H - 4;
-          if (mode == 2) {
-            it.circle(body_cx, dome_cy, 9, dome_fill);
-          } else {
+            // Mid disc (medium, dome-color — bridges shoulder gap)
+            it.filled_rectangle(mid_rect_x, mid_rect_y, mid_rect_w,
+                                mid_rect_h, dome_fill);
+            it.filled_circle(body_cx - mid_half_w + mid_half_h, mid_cy,
+                             mid_half_h, dome_fill);
+            it.filled_circle(body_cx + mid_half_w - mid_half_h, mid_cy,
+                             mid_half_h, dome_fill);
+            // Dome (narrow, light)
             it.filled_circle(body_cx, dome_cy, 9, dome_fill);
           }
 
