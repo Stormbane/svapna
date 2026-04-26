@@ -532,8 +532,10 @@ display:
       float sway_amp  = wind_kmh / 25.0f;
       if (sway_amp > 3.0f) sway_amp = 3.0f;
 
-      // Cloud count from cloud cover %.
-      int n_clouds = (int)roundf(cloud_pct / 25.0f);
+      // Cloud count from cloud cover %. ceil-style so any cloud cover at
+      // all gives at least one cloud, and 32% gives 2 not 1 (so the sky
+      // isn't bare for stretches when the lone cloud drifts off-screen).
+      int n_clouds = (int)ceilf(cloud_pct / 30.0f);
       if (n_clouds < 0) n_clouds = 0;
       if (n_clouds > MAX_CLOUDS) n_clouds = MAX_CLOUDS;
 
@@ -811,8 +813,12 @@ display:
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,    // sky band
         10, 20, 35, 50, 65, 78,           // grass density ramp
       };
-      // Wave speed: base 1.5 cells/sec drift + wind contribution.
-      float wave_speed = 1.5f + wind_east * (wind_kmh / 6.0f);
+      // Wave speed: direction comes from the sign of the easterly
+      // component (so south winds and calm don't kill the wave), but
+      // magnitude tracks wind_kmh — calm = gentle drift, gusty = fast
+      // wave traveling across the field.
+      float wind_dir_sign = (wind_east >= 0.0f) ? 1.0f : -1.0f;
+      float wave_speed    = wind_dir_sign * (0.6f + wind_kmh / 8.0f);
       float wave_pos   = (float)now_ms / 1000.0f * wave_speed;
       for (int row = 10; row < ROWS; row++) {
         int dens = row_density[row];
@@ -879,10 +885,14 @@ display:
         // Planes 1 + 2: standing plant. trunk_h=0 means a bush (crown
         // only, no trunk). lean offsets the crown horizontally for
         // asymmetry — not all trees are symmetric blobs.
+        // Two boosted slow oscillations are superimposed on top of the
+        // wind-driven sway so the trees keep moving — peaks regularly
+        // round to ±1 cell — even when there's no wind at all.
         float wind_sway  = sinf((float)now_ms / 800.0f + tree_phase[t]) * sway_amp;
-        float micro      = sinf((float)now_ms / 3000.0f + tree_phase[t] * 1.5f) * 0.4f;
-        float crown_sway = (wind_sway + micro) * plane_sway[p];
-        float trunk_sway = (wind_sway * 0.4f + micro * 0.7f) * plane_sway[p];
+        float micro_a    = sinf((float)now_ms / 4500.0f + tree_phase[t] * 1.5f) * 0.6f;
+        float micro_b    = sinf((float)now_ms / 1700.0f + tree_phase[t] * 2.3f) * 0.5f;
+        float crown_sway = (wind_sway + micro_a + micro_b) * plane_sway[p];
+        float trunk_sway = (wind_sway * 0.4f + (micro_a + micro_b) * 0.5f) * plane_sway[p];
         int crown_dx = (int)roundf(crown_sway) + tree_lean[t];
         int trunk_dx = (int)roundf(trunk_sway);
 

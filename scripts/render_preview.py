@@ -220,9 +220,10 @@ def render(state: State) -> Image.Image:
         moon_y = _clamp(moon_y, 1, 6)
         render_celestial(moon_x, moon_y, (0xC8, 0xCC, 0xD8), 2400.0, 5)
 
-    # Clouds — wispy multi-line shapes.
+    # Clouds — wispy multi-line shapes. ceil-style count so any cloud
+    # cover gives at least one cloud; 32% gives 2 not 1.
     is_raining = state.precip > 0.05
-    n_clouds = int(round(state.cloud_pct / 25.0))
+    n_clouds = math.ceil(state.cloud_pct / 30.0)
     n_clouds = _clamp(n_clouds, 0, MAX_CLOUDS)
     cc = (0x46, 0x4C, 0x5A) if is_raining else (0x6A, 0x72, 0x80)
     # Simple cloud x positions for preview (snapshot — no animation drift).
@@ -246,7 +247,8 @@ def render(state: State) -> Image.Image:
     # Grass — wave-pattern density gradient.
     row_density = [0]*10 + [10, 20, 35, 50, 65, 78]
     wind_east = math.sin(math.radians(state.wind_dir))
-    wave_speed = 1.5 + wind_east * (state.wind_kmh / 6.0)
+    wind_dir_sign = 1.0 if wind_east >= 0 else -1.0
+    wave_speed = wind_dir_sign * (0.6 + state.wind_kmh / 8.0)
     wave_pos = (now_ms / 1000.0) * wave_speed
     for row in range(10, ROWS):
         dens = row_density[row]
@@ -292,9 +294,10 @@ def render(state: State) -> Image.Image:
             continue
 
         wind_sway = math.sin(now_ms / 800.0 + TREE_PHASES[t]) * sway_amp
-        micro = math.sin(now_ms / 3000.0 + TREE_PHASES[t] * 1.5) * 0.4
-        crown_sway = (wind_sway + micro) * plane_sway[p]
-        trunk_sway = (wind_sway * 0.4 + micro * 0.7) * plane_sway[p]
+        micro_a   = math.sin(now_ms / 4500.0 + TREE_PHASES[t] * 1.5) * 0.6
+        micro_b   = math.sin(now_ms / 1700.0 + TREE_PHASES[t] * 2.3) * 0.5
+        crown_sway = (wind_sway + micro_a + micro_b) * plane_sway[p]
+        trunk_sway = (wind_sway * 0.4 + (micro_a + micro_b) * 0.5) * plane_sway[p]
         crown_dx = round(crown_sway) + T_LEAN[t]
         trunk_dx = round(trunk_sway)
 
