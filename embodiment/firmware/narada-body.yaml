@@ -332,6 +332,31 @@ api:
               ESP_LOGW("bhumi", "unknown bhumi: %s", name.c_str());
             }
 
+    # --- Cycle 3.2 — alien rig services ---
+    - service: set_alien_activity
+      variables:
+        name: string
+      then:
+        - lambda: |-
+            id(alien_activity) = name;
+            ESP_LOGI("alien", "activity = %s", name.c_str());
+
+    - service: set_alien_mood
+      variables:
+        name: string
+      then:
+        - lambda: |-
+            id(alien_mood) = name;
+            ESP_LOGI("alien", "mood = %s", name.c_str());
+
+    - service: set_alien_speech
+      variables:
+        phrase: string
+      then:
+        - lambda: |-
+            id(alien_speech) = phrase;
+            ESP_LOGI("alien", "speech (%u chars)", (unsigned)phrase.length());
+
 time:
   - platform: sntp
     id: sntp_time
@@ -368,6 +393,23 @@ globals:
   - id: bhumi_current
     type: std::string
     initial_value: '"landscape"'
+
+  # --- Cycle 3.2 — alien rig state ---
+  # When bhumi_current == "ufo_interior", these drive the alien-Narada
+  # composition. alien_activity selects the preset (resting, speaking,
+  # listening, thinking, working, dreaming, walking_left, walking_right,
+  # greeting); alien_mood overlays on eyes/brow/mouth (neutral, happy,
+  # upset, sad, playful); alien_speech is the text shown in the speech
+  # bubble when the activity is "speaking".
+  - id: alien_activity
+    type: std::string
+    initial_value: '"resting"'
+  - id: alien_mood
+    type: std::string
+    initial_value: '"neutral"'
+  - id: alien_speech
+    type: std::string
+    initial_value: '""'
 
   # --- backwards-compat globals (remove after Cycle 2 once daemon migrates) ---
   - id: heartbeat_status_str
@@ -540,8 +582,9 @@ display:
         // Cockpit walls.
         it.fill(Color(0x15, 0x18, 0x20));
 
-        // Porthole — fill circle in sky color, then stroke a rim ring.
-        const int px = 160, py = 72, pr = 60;
+        // Porthole — small window in upper-right (cycle 3.2: alien gets
+        // the majority of the screen).
+        const int px = 268, py = 38, pr = 32;
         it.filled_circle(px, py, pr, porthole_sky);
         Color rim(0x60, 0x65, 0x70);
         it.circle(px, py, pr, rim);
@@ -583,7 +626,7 @@ display:
           }
         }
 
-        // Mood tint for accent (heart).
+        // ----- Mood tint for accents -----
         float v = (id(mood_valence) + 1.0f) * 0.5f;
         float a = id(mood_arousal);
         auto bcomp = [&](float c00, float c10, float c01, float c11) -> uint8_t {
@@ -595,57 +638,239 @@ display:
         uint8_t tr = bcomp(0x4A, 0xC4, 0xB0, 0x7A);
         uint8_t tg = bcomp(0x55, 0x96, 0x40, 0x50);
         uint8_t tb = bcomp(0x60, 0x2A, 0x60, 0x8C);
+        Color accent(
+          (uint8_t)((tr * 1.15f > 255.0f) ? 255 : (int)(tr * 1.15f)),
+          (uint8_t)((tg * 1.15f > 255.0f) ? 255 : (int)(tg * 1.15f)),
+          (uint8_t)((tb * 1.15f > 255.0f) ? 255 : (int)(tb * 1.15f))
+        );
 
-        // Alien Narada — head brackets + eyes + heart, centered.
+        // ----- Alien rig: resolve layer glyphs for current activity -----
         Color skin(0x90, 0xA8, 0x70);
-        Color eyes(0xE0, 0xE4, 0xEA);
-        it.print(20 * 7, 10 * 14, id(plex_mono_12), skin, "(");
-        it.print(24 * 7, 10 * 14, id(plex_mono_12), skin, ")");
+        Color eyes_col(0xE0, 0xE4, 0xEA);
+        const std::string& act = id(alien_activity);
+        const std::string& mood = id(alien_mood);
 
-        // Eye saccade — small jumps every ~1.8s, brief 15% of cycle.
-        uint32_t sac_seed = (uint32_t)(bhumi_now_ms / 1800UL);
-        uint32_t sh = sac_seed * 2654435761u;
-        int eye_dx = 0, eye_dy = 0;
-        float sac_phase = (float)(bhumi_now_ms % 1800UL) / 1800.0f;
-        if (id(activity_mode) == std::string("speaking")) {
-          eye_dx = 0; eye_dy = 0;
-        } else if (sac_phase <= 0.15f) {
-          if (id(attention_mode) == std::string("outward")) {
-            eye_dx = (sh & 1) ? 1 : -1;
+        // Defaults (matches "resting" preset).
+        const char* antennae = "..---..";
+        const char* brow     = "_ _";
+        const char* eyes_g   = "O O";
+        const char* mouth    = "\\_/";
+        const char* ear_l    = "";
+        const char* ear_r    = "";
+        const char* legs     = "/     \\";
+        bool draw_side_O     = true;
+        const char* sh_str   = "/|     |\\";   // shoulders
+        const char* hd_str   = "O |_____| O";  // hands
+
+        // Walking translation
+        int alien_col = 14;
+        int alien_row = 1;
+        if (act == std::string("walking_right") || act == std::string("walking_left")) {
+          float cycle_t = (float)(bhumi_now_ms % 24000UL) / 24000.0f;
+          int offset = (int)(cycle_t * 20.0f - 10.0f);
+          if (act == std::string("walking_left")) offset = -offset;
+          alien_col += offset;
+          // Walking eyes look in direction of travel.
+          if (act == std::string("walking_right")) eyes_g = "o >";
+          else                                      eyes_g = "< o";
+          // Leg cycle: 2-frame, 300ms per frame.
+          int leg_frame = (int)(bhumi_now_ms / 300UL) & 1;
+          if (leg_frame == 0) {
+            legs = (act == std::string("walking_right")) ? "/\\   / " : " \\   /\\";
           } else {
-            eye_dx = (int)((sh >> 4) % 3u) - 1;
-            eye_dy = (int)((sh >> 8) % 3u) - 1;
+            legs = "/     \\";
           }
         }
-        it.print((21 + eye_dx) * 7, (11 + eye_dy) * 14, id(plex_mono_12),
-                 eyes, "o");
-        it.print((23 + eye_dx) * 7, (11 + eye_dy) * 14, id(plex_mono_12),
-                 eyes, "o");
 
-        // Heart — beats with same period as wordmark breath (4000ms).
-        float ub = sinf(((float)(bhumi_now_ms % 4000UL) / 4000.0f) * 6.2831853f);
-        float pulse = (ub + 1.0f) * 0.5f;
-        float hb = 0.55f + pulse * 0.45f;
-        float hr_f = (float)tr * 1.3f * hb;
-        float hg_f = (float)tg * 1.3f * hb;
-        float hb_f = (float)tb * 1.3f * hb;
-        if (hr_f > 255.0f) hr_f = 255.0f;
-        if (hg_f > 255.0f) hg_f = 255.0f;
-        if (hb_f > 255.0f) hb_f = 255.0f;
-        Color heart_color((uint8_t)hr_f, (uint8_t)hg_f, (uint8_t)hb_f);
-        const char* heart_glyph = (pulse > 0.7f) ? "*" : "+";
-        it.print(22 * 7, 12 * 14, id(plex_mono_12), heart_color, heart_glyph);
+        // Activity-specific overrides
+        if (act == std::string("speaking")) {
+          eyes_g = "o o";
+          // Viseme cycle: 7 frames, 130ms each.
+          static const char* visemes[7] = {"<u>", "<_u_>", "<O>", "<_>", "<u>", "===", "<u>"};
+          int vi = (int)(bhumi_now_ms / 130UL) % 7;
+          mouth = visemes[vi];
+        } else if (act == std::string("listening")) {
+          antennae = "^^---^^";
+          brow = "^ ^";
+          eyes_g = "o o";
+          mouth = "---";
+          // Listening pulse: 4 frames, 300ms each.
+          static const char* lefts[4]  = {"", "(", "( (", "( ( ("};
+          static const char* rights[4] = {"", ")", ") )", ") ) )"};
+          int wi = (int)(bhumi_now_ms / 300UL) % 4;
+          ear_l = lefts[wi];
+          ear_r = rights[wi];
+        } else if (act == std::string("thinking")) {
+          antennae = "??---??";
+          eyes_g = "o '";
+          mouth = "---";
+        } else if (act == std::string("working")) {
+          eyes_g = ". .";
+          mouth = "___";
+          sh_str = "__|     |__";
+          hd_str = " [_______] ";
+          draw_side_O = false;
+        } else if (act == std::string("dreaming")) {
+          antennae = ",,---,,";
+          brow = "- -";
+          eyes_g = "-----";   // 5-char closed_deep
+          mouth = "~~~";
+        } else if (act == std::string("greeting")) {
+          eyes_g = "o o";
+          // Namaskaram silhouette uses custom rows below.
+        } else if (act == std::string("surprised")) {
+          antennae = "!!---!!";
+          brow = "^ ^";
+          eyes_g = "O O";
+          mouth = " O ";
+        }
 
-        // Console glints along bottom row.
-        Color dot_color(0x40, 0x4A, 0x55);
-        Color dot_glint(0x90, 0xA0, 0xC0);
-        uint32_t glint_id = (uint32_t)(bhumi_now_ms / 2000UL);
-        uint32_t glint_h = glint_id * 2654435761u;
-        int glint_col = (int)(glint_h % 44u);
-        for (int col = 2; col < 42; col += 3) {
-          Color c = (col == glint_col) ? dot_glint : dot_color;
-          const char* g = (col & 1) ? "." : ".";
-          it.print(col * 7, 14 * 14, id(plex_mono_12), c, g);
+        // Mood overlays (only when not speaking — visemes own the mouth)
+        bool mood_active = (act != std::string("speaking"));
+        if (mood_active) {
+          if (mood == std::string("happy")) {
+            brow = "_ _"; eyes_g = "o o"; mouth = "\\_/";
+          } else if (mood == std::string("upset")) {
+            brow = "\\ /"; eyes_g = "A A"; mouth = "/-\\";
+          } else if (mood == std::string("sad")) {
+            brow = "v v"; eyes_g = ". ."; mouth = "/_\\";
+          } else if (mood == std::string("playful")) {
+            eyes_g = "- O"; mouth = "=u=";
+          }
+        }
+
+        // ----- Render alien row by row -----
+        const int CW = 7, CH = 14;
+        int ax = alien_col * CW;
+        int ay = alien_row * CH;
+
+        // Row 0: antennae (e.g. "..---..")
+        {
+          char buf[24];
+          snprintf(buf, sizeof(buf), "   %s   ", antennae);
+          it.print(ax, ay + 0 * CH, id(plex_mono_12), skin, buf);
+        }
+        // Row 1: brow (e.g. "_ _")
+        {
+          char buf[24];
+          snprintf(buf, sizeof(buf), "  /  %s  \\", brow);
+          it.print(ax, ay + 1 * CH, id(plex_mono_12), skin, buf);
+        }
+        // Row 2: eyes
+        {
+          char buf[24];
+          if (strlen(eyes_g) == 5) {
+            snprintf(buf, sizeof(buf), " |  %s  |", eyes_g);
+          } else {
+            snprintf(buf, sizeof(buf), " |   %s   |", eyes_g);
+          }
+          it.print(ax, ay + 2 * CH, id(plex_mono_12), eyes_col, buf);
+        }
+        // Row 3: ears + nose
+        it.print(ax, ay + 3 * CH, id(plex_mono_12), skin, " C    u    D");
+        if (ear_l && ear_l[0]) {
+          int dx_chars = (int)strlen(ear_l);
+          it.print(ax - (dx_chars + 1) * CW, ay + 3 * CH, id(plex_mono_12),
+                   accent, ear_l);
+        }
+        if (ear_r && ear_r[0]) {
+          it.print(ax + 13 * CW + CW, ay + 3 * CH, id(plex_mono_12),
+                   accent, ear_r);
+        }
+        // Row 4: mouth (3- or 5-char)
+        {
+          char buf[24];
+          if (strlen(mouth) == 5) {
+            snprintf(buf, sizeof(buf), " |  %s  |", mouth);
+          } else {
+            snprintf(buf, sizeof(buf), " |   %s   |", mouth);
+          }
+          it.print(ax, ay + 4 * CH, id(plex_mono_12),
+                   (act == std::string("speaking")) ? accent : skin, buf);
+        }
+        // Row 5: chin (or namaskaram start)
+        if (act == std::string("greeting")) {
+          it.print(ax, ay + 5 * CH, id(plex_mono_12), skin, "  \\___A___/");
+          it.print(ax, ay + 6 * CH, id(plex_mono_12), skin, "   | / \\");
+          it.print(ax, ay + 7 * CH, id(plex_mono_12), skin, "   |/   \\|");
+          it.print(ax, ay + 8 * CH, id(plex_mono_12), skin, "   |_____|");
+        } else {
+          it.print(ax, ay + 5 * CH, id(plex_mono_12), skin, "  \\_______/");
+          it.print(ax, ay + 6 * CH, id(plex_mono_12), skin, "   |     |");
+          // Row 7: shoulders
+          {
+            char buf[24];
+            int pad = (13 - (int)strlen(sh_str)) / 2;
+            snprintf(buf, sizeof(buf), "%*s%s", pad, "", sh_str);
+            it.print(ax, ay + 7 * CH, id(plex_mono_12), skin, buf);
+          }
+          // Row 8: hands
+          {
+            char buf[24];
+            int pad = (13 - (int)strlen(hd_str)) / 2;
+            snprintf(buf, sizeof(buf), "%*s%s", pad, "", hd_str);
+            it.print(ax, ay + 8 * CH, id(plex_mono_12), skin, buf);
+          }
+        }
+        // Row 9: waist
+        it.print(ax, ay + 9 * CH, id(plex_mono_12), skin, "   |     |");
+        // Row 10: lower body
+        it.print(ax, ay + 10 * CH, id(plex_mono_12), skin, "   |_____|");
+        // Row 11: legs
+        {
+          char buf[24];
+          snprintf(buf, sizeof(buf), "   %s", legs);
+          it.print(ax, ay + 11 * CH, id(plex_mono_12), skin, buf);
+        }
+
+        // Floating accents (z's, ?'s, !, music notes).
+        if (act == std::string("dreaming")) {
+          int zphase = (int)(bhumi_now_ms / 700UL) % 3;
+          Color zc(0xA0, 0xA8, 0xC0);
+          int zx = ax + 14 * CW + zphase * CW;
+          int zy = ay + 0 * CH - zphase * CH;
+          it.print(zx, zy, id(plex_mono_12), zc, "z");
+          it.print(zx + 2 * CW, zy - CH, id(plex_mono_12), zc, "Z");
+        } else if (act == std::string("thinking")) {
+          Color qc(0xC0, 0xC4, 0xD0);
+          int qphase = (int)(bhumi_now_ms / 500UL) % 2;
+          it.print(ax + 14 * CW, ay + (qphase ? -1 : -2) * CH,
+                   id(plex_mono_12), qc, "?");
+          it.print(ax + 15 * CW, ay + (qphase ? -2 : -3) * CH,
+                   id(plex_mono_12), qc, "?");
+        } else if (act == std::string("surprised")) {
+          it.print(ax - CW, ay - CH, id(plex_mono_12), accent, "!");
+          it.print(ax + 14 * CW, ay - CH, id(plex_mono_12), accent, "!");
+        }
+
+        // ----- Speech bubble (cycle 3.2: expanding + scrolling text) -----
+        if (act == std::string("speaking") && !id(alien_speech).empty()) {
+          const std::string& speech = id(alien_speech);
+          // Bubble fills the upper-right strip: cols 0-44, rows 0-3.
+          int bx = 8, by = 4;
+          int bw = 320 - 16;   // full width minus margin
+          int bh = 3 * CH + 4;
+          // Bubble background (light grey)
+          it.filled_rectangle(bx, by, bw, bh, Color(0xE0, 0xE4, 0xEA));
+          it.rectangle(bx, by, bw, bh, Color(0x80, 0x88, 0x95));
+          // Tail pointing back to mouth.
+          int mouth_x = ax + 6 * CW;
+          int mouth_y = ay + 4 * CH + CH;
+          it.line(bx + 24, by + bh, mouth_x, mouth_y, Color(0x80, 0x88, 0x95));
+          // Text — wrap and scroll if too long.
+          int chars_per_line = (bw - 16) / CW;
+          int total_chars = (int)speech.length();
+          int visible_per_line = chars_per_line;
+          int max_visible = visible_per_line;   // single line for now
+          int scroll_offset = 0;
+          if (total_chars > max_visible) {
+            scroll_offset = (int)((bhumi_now_ms / 100UL) % (uint32_t)(total_chars - max_visible + 1));
+          }
+          int end = scroll_offset + max_visible;
+          if (end > total_chars) end = total_chars;
+          std::string visible = speech.substr(scroll_offset, end - scroll_offset);
+          it.print(bx + 8, by + 4, id(plex_mono_12),
+                   Color(0x20, 0x24, 0x2C), visible.c_str());
         }
         return;
       }
