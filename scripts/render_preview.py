@@ -124,6 +124,10 @@ class State:
     tree_species: str = "pine"   # "pine" | "oak" | "mixed"
     ufo_mode: str = "grey"        # "grey" | "mood" | "outline"
     bhumi: str = "landscape"      # "landscape" | "ufo_interior"
+    activity_mode: str = "resting"
+    alien_activity: str = ""      # "" → derive from activity_mode
+    alien_mood: str = "neutral"   # "neutral" | "happy" | "upset" | "sad" | "playful"
+    alien_speech: str = ""
 
 
 def render(state: State) -> Image.Image:
@@ -133,8 +137,13 @@ def render(state: State) -> Image.Image:
 
 
 def _render_ufo_interior(state: State) -> Image.Image:
-    """Inside-the-saucer view. Dark cockpit, porthole onto the sky,
-    alien-Narada with beating heart + eyes."""
+    """Inside-the-saucer view. Cockpit + porthole onto the sky + rigged
+    alien-Narada built from the layered vocabulary in
+    `svapna.indriyas.karmendriyas.drishti.rig`."""
+    from svapna.indriyas.karmendriyas.drishti.rig import (
+        Rig, compose, alien_for_activity, ALIEN_WIDTH, ALIEN_HEIGHT,
+    )
+
     img = Image.new("RGB", (SCREEN_W, SCREEN_H))
     draw = ImageDraw.Draw(img)
     font = ImageFont.truetype(str(FONT_DIR / "IBMPlexMono-Regular.ttf"), 12)
@@ -144,9 +153,9 @@ def _render_ufo_interior(state: State) -> Image.Image:
     cockpit = (0x15, 0x18, 0x20)
     draw.rectangle((0, 0, SCREEN_W, SCREEN_H), fill=cockpit)
 
-    # Porthole — circle showing the outside sky. Center at (160, 70),
-    # radius 60 px.
-    px, py, pr = 160, 72, 60
+    # Porthole — small window in upper-right; alien fills most of the screen
+    # (per Suti's mandate that the alien get majority of screen real estate).
+    px, py, pr = 268, 38, 32
     sky = _sky_color(state.hour, state.lightning)
     draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=sky)
     # Porthole rim — medium grey ring.
@@ -186,52 +195,119 @@ def _render_ufo_interior(state: State) -> Image.Image:
             return
         draw.text((col * CELL_W, row * CELL_H), ch, font=font, fill=color)
 
-    # Alien Narada — centered, ~3 cells tall.
-    skin = (0x90, 0xA8, 0x70)
-    eyes = (0xE0, 0xE4, 0xEA)
-    # Head outline (subtle bracket pair above eyes).
-    put(20, 10, skin, "(")
-    put(24, 10, skin, ")")
-    # Eyes — saccade direction based on attention; locked center when speaking.
-    saccade_seed = int(now_ms / 1800.0)
-    sh = (saccade_seed * 2654435761) & 0xFFFFFFFF
-    if state.attention_mode == "outward":
-        eye_dx, eye_dy = 1 if (sh & 1) else -1, 0
-    elif state.activity_mode if hasattr(state, "activity_mode") else False:
-        eye_dx, eye_dy = 0, 0
-    else:
-        eye_dx = ((sh >> 4) % 3) - 1
-        eye_dy = ((sh >> 8) % 3) - 1
-    # Brief saccade window — eyes only "move" briefly within their cycle.
-    saccade_phase = (now_ms % 1800) / 1800.0
-    if saccade_phase > 0.15:
-        eye_dx = 0
-        eye_dy = 0
-    put(21 + eye_dx, 11 + eye_dy, eyes, "o")
-    put(23 + eye_dx, 11 + eye_dy, eyes, "o")
+    # Build the rig from the alien_activity preset + mood overlay.
+    # Walking preset is selected by alien_activity directly; daemon decides.
+    activity_name = state.alien_activity or alien_for_activity(state.activity_mode)
+    rig = Rig.from_preset(activity_name, mood=state.alien_mood)
 
-    # Heart — beats at the wordmark breath period (4000ms). Brightness
-    # peaks on in-breath, dims on out-breath. Mood-tinted.
-    breath = math.sin((now_ms % 4000.0) / 4000.0 * 2 * math.pi)
-    pulse = (breath + 1.0) * 0.5      # 0..1
-    heart_brightness = 0.55 + pulse * 0.45
-    heart_color = tuple(_clamp(int(c * 1.3 * heart_brightness), 0, 255)
-                        for c in tint)
-    heart_glyph = "*" if pulse > 0.7 else "+"
-    put(22, 12, heart_color, heart_glyph)
+    # Walking translation: x_offset cycles ±10 cols across ~24s for idle pacing.
+    if activity_name in ("walking_right", "walking_left"):
+        # Position drifts in the named direction across 12s window then turns.
+        cycle_t = (now_ms % 24000.0) / 24000.0
+        if activity_name == "walking_right":
+            base_offset = int((cycle_t * 20.0) - 10.0)
+        else:
+            base_offset = int(10.0 - (cycle_t * 20.0))
+        rig.x_offset = base_offset
 
-    # Console dots along bottom rows — subtle instrument backlight.
-    dot_color = (0x40, 0x4A, 0x55)
-    glint_id = int(now_ms / 2000.0)
-    glint_h = (glint_id * 2654435761) & 0xFFFFFFFF
-    glint_col = glint_h % COLS
-    for col in range(2, COLS - 2, 3):
-        c = dot_color
-        if col == glint_col:
-            c = tuple(_clamp(int(v * 2.2), 0, 255) for v in c)
-        put(col, 14, c, "·" if (col & 1) else ".")
+    rows, extras = compose(rig, now_ms)
+
+    # Color palette for the alien.
+    skin    = (0x90, 0xA8, 0x70)
+    eyes_col = (0xE0, 0xE4, 0xEA)
+    accent_col = tuple(_clamp(int(c * 1.15), 0, 255) for c in tint)
+
+    # Anchor position for the alien — center-left of screen, fills most of it.
+    alien_col = 14 + rig.x_offset    # 13-wide alien around cols 14-27
+    alien_row = 1                     # high up, alien has majority of screen
+
+    # Color picker: most rows skin-colored; eyes row uses pale; mouth uses
+    # smile-or-mood color; brow uses skin.
+    def row_color(rix: int) -> tuple[int, int, int]:
+        if rix == 2:        # eyes
+            return eyes_col
+        if rix == 4:        # mouth
+            return accent_col if rig.mouth.startswith("talking") else skin
+        return skin
+
+    # Paint the 12 alien rows.
+    for rix, row_text in enumerate(rows):
+        for cix, ch in enumerate(row_text):
+            if ch == " ":
+                continue
+            put(alien_col + cix, alien_row + rix, row_color(rix), ch)
+
+    # Paint the extras (ear waves, hand floats, accents).
+    for (dx, dy, ch) in extras:
+        c = accent_col if (rig.accent_l in ("music",) or rig.accent_r in ("music",)) else skin
+        # Mood overlays: shock uses bright; thinking_q uses pale.
+        if ch in ("?",):
+            c = (0xC0, 0xC4, 0xD0)
+        elif ch in ("!",):
+            c = accent_col
+        elif ch in ("z", "Z"):
+            c = (0xA0, 0xA8, 0xC0)
+        put(alien_col + dx, alien_row + dy, c, ch)
+
+    # Speech bubble — when alien is speaking and there's text to show.
+    if state.alien_speech and activity_name == "speaking":
+        _draw_speech_bubble(draw, font, now_ms, state.alien_speech)
 
     return img
+
+
+def _draw_speech_bubble(draw, font, now_ms: float, text: str) -> None:
+    """Render an expanding speech bubble that fills increasing screen area
+    based on text length, with text scrolling horizontally if it overflows."""
+    # Bubble target size grows with text length.
+    char_w = CELL_W
+    char_h = CELL_H
+    # Animation: grow from a point at mouth (col 22, row 12) over 250ms.
+    growth_t = min(1.0, (now_ms % 100000) / 250.0)  # simplified — in real use, track speech-start
+    # For the standalone preview we just always show fully grown.
+    growth_t = 1.0
+    target_w_chars = min(40, max(10, len(text) // 2 + 8))
+    target_h_chars = max(3, (len(text) // max(1, target_w_chars - 4)) + 2)
+    bubble_w = int(target_w_chars * char_w * growth_t)
+    bubble_h = int(target_h_chars * char_h * growth_t)
+    # Position: right of alien, top half of screen if small; centered if large.
+    bx = 8
+    by = 8
+    if target_w_chars * char_w + 16 < SCREEN_W:
+        bx = SCREEN_W - bubble_w - 8
+    bubble_color = (0xE0, 0xE4, 0xEA)
+    bubble_outline = (0x80, 0x88, 0x95)
+    # Rounded rectangle bubble.
+    draw.rounded_rectangle((bx, by, bx + bubble_w, by + bubble_h),
+                           radius=10, fill=bubble_color, outline=bubble_outline,
+                           width=2)
+    # Tail pointing back to alien mouth.
+    alien_mouth_x = (16 + 6) * CELL_W   # rough alien center
+    alien_mouth_y = (6 + 4) * CELL_H
+    if bubble_w > 20:
+        draw.polygon([
+            (bx + 12, by + bubble_h),
+            (bx + 28, by + bubble_h),
+            (alien_mouth_x, alien_mouth_y - 4),
+        ], fill=bubble_color, outline=bubble_outline)
+    # Text inside — wraps and scrolls if too long.
+    inner_w_chars = max(1, target_w_chars - 4)
+    inner_h_chars = max(1, target_h_chars - 2)
+    visible_chars = inner_w_chars * inner_h_chars
+    if len(text) <= visible_chars:
+        display_text = text
+    else:
+        # Scroll: 1 char/100ms.
+        scroll_offset = int(now_ms / 100.0) % (len(text) - visible_chars + 1)
+        display_text = text[scroll_offset:scroll_offset + visible_chars]
+    # Wrap into lines.
+    text_color = (0x20, 0x24, 0x2C)
+    for line_ix in range(inner_h_chars):
+        chunk = display_text[line_ix * inner_w_chars:(line_ix + 1) * inner_w_chars]
+        if not chunk:
+            break
+        draw.text((bx + 12, by + 8 + line_ix * char_h), chunk,
+                  font=font, fill=text_color)
 
 
 def _render_landscape(state: State) -> Image.Image:
@@ -767,6 +843,14 @@ def main():
                    choices=["grey", "mood", "outline"])
     p.add_argument("--bhumi", default="landscape",
                    choices=["landscape", "ufo_interior"])
+    p.add_argument("--alien-activity", default="",
+                   help="Override alien preset (resting, speaking, listening, "
+                        "thinking, working, dreaming, walking_right, "
+                        "walking_left, greeting, surprised, singing)")
+    p.add_argument("--alien-mood", default="neutral",
+                   choices=["neutral", "happy", "upset", "sad", "playful"])
+    p.add_argument("--alien-speech", default="",
+                   help="Text to display in speech bubble (only when speaking)")
     p.add_argument("--anim-ms", type=float, default=None,
                    help="Animation timestamp (default: real time)")
     p.add_argument("--live", action="store_true",
@@ -778,6 +862,9 @@ def main():
         s.tree_species = args.tree_species
         s.ufo_mode = args.ufo_mode
         s.bhumi = args.bhumi
+        s.alien_activity = args.alien_activity
+        s.alien_mood = args.alien_mood
+        s.alien_speech = args.alien_speech
     else:
         s = State(
             mood_valence=args.mood_valence,
@@ -792,6 +879,9 @@ def main():
             tree_species=args.tree_species,
             ufo_mode=args.ufo_mode,
             bhumi=args.bhumi,
+            alien_activity=args.alien_activity,
+            alien_mood=args.alien_mood,
+            alien_speech=args.alien_speech,
         )
 
     if args.hour is None:
