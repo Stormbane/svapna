@@ -1,0 +1,56 @@
+{
+  "name": "test_atlas",
+  "version": 1,
+  "anchor": "center",
+  "enum_prefix": "TA",
+  "frames": [
+    {
+      "name": "eye_left",
+      "file": "eye_left.png",
+      "ox": -16,
+      "oy": -16
+    },
+    {
+      "name": "eye_right",
+      "file": "eye_right.png",
+      "ox": -16,
+      "oy": -16
+    },
+    {
+      "name": "mouth_neutral",
+      "file": "mouth_neutral.png",
+      "ox": -16,
+      "oy": -16
+    },
+    {
+      "name": "body_idle",
+      "file": "body_idle.png",
+      "ox": -16,
+      "oy": -16
+    },
+    {
+      "name": "mood_neutral",
+      "file": "mood_neutral.png",
+      "ox": -24,
+      "oy": -24
+    },
+    {
+      "name": "mood_curious",
+      "file": "mood_curious.png",
+      "ox": -24,
+      "oy": -24
+    },
+    {
+      "name": "mood_focused",
+      "file": "mood_focused.png",
+      "ox": -24,
+      "oy": -24
+    },
+    {
+      "name": "glyph_dot",
+      "file": "glyph_dot.png",
+      "ox": -8,
+      "oy": -8
+    }
+  ]
+}

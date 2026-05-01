@@ -45,13 +45,25 @@ until perf is validated on real hardware with placeholder data.
       headroom. Bhumi (B) and sandhi (D) optimizations deferred to
       Phase 3.
 
-### Phase 2 — Sprite renderer + state machine
+### Phase 2 — Sprite renderer + state machine — IN PROGRESS
 
-- [ ] **Sprite atlas format** — PNG sheet + JSON index → flash blob via
-      build-time tool.
-- [ ] **Device-side sprite renderer** — blit-from-buffer with dirty-region
-      tracking. Layer compositor (background → body → mood → eyes → mouth →
-      marginalia).
+Design: `docs/plans/embodiment-phase2-design-2026-05-02.md`.
+
+- [x] **Sprite atlas format.** PNG-per-frame + JSON manifest →
+      generated C header with stable enum, flat RGB565 pixel pool,
+      and `AtlasFrame{w,h,ox,oy,pixel_offset}` table. Magenta-key
+      transparency. Build tool: `scripts/build_atlas.py`.
+- [x] **Device-side sprite renderer.** Layer compositor in
+      `embodiment/firmware/include/compositor.h`. Six layers (body,
+      mood, eye_l, eye_r, mouth, marginalia), each with prev/current
+      frame tracking. On change: bg-repaint old bbox, blit new.
+      Dirty-rect SPI flush is then handled by the ESPHome ili9xxx
+      driver. Confirmed on hardware: idle = 1 µs/frame, mood swap =
+      ~324 µs, glyph toggle = 11–19 µs.
+- [x] **First Phase 2 firmware: `narada-embodiment.yaml`.** Boots a
+      neutral face on dark bg. API services: `set_face`, `set_layer`,
+      `set_mood`, `set_glyph`, `clear_face`. Driver:
+      `scripts/embodiment_control.py {mood|glyph|face|layer|clear|demo}`.
 - [ ] **State machine** — `place` × `liminal` × `mood` + per-component
       sprite selection. Driven by API events from the bridge.
 - [ ] **Phoneme→mouth mapping** — wire Piper phoneme timestamps from
