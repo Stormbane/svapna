@@ -64,10 +64,22 @@ Design: `docs/plans/embodiment-phase2-design-2026-05-02.md`.
       neutral face on dark bg. API services: `set_face`, `set_layer`,
       `set_mood`, `set_glyph`, `clear_face`. Driver:
       `scripts/embodiment_control.py {mood|glyph|face|layer|clear|demo}`.
-- [ ] **State machine** — `place` × `liminal` × `mood` + per-component
-      sprite selection. Driven by API events from the bridge.
-- [ ] **Phoneme→mouth mapping** — wire Piper phoneme timestamps from
-      bridge to device. Preston-Blair 9-shape set.
+- [x] **State machine** (interior steady-state). `include/state_machine.h`
+      owns `mood × speaking × phoneme × gaze × glyph`, exposes
+      `set_*` API that pushes layer commands into the compositor.
+      Place/liminal (sandhi) deferred to Phase 3 — they need a
+      different state surface. State machine is a Meyer's singleton
+      (`narada::sm()`), same pattern as the compositor.
+- [x] **Phoneme→mouth mapping (firmware side).** 5 placeholder mouth
+      shapes in the test atlas (REST/AA/EE/OH/MBP). API service
+      `set_phoneme(int)` snaps the mouth via state machine. Bridge
+      side — Piper IPA → phoneme stream → API push — comes when
+      we wire the bridge.
+- [ ] **Phoneme→mouth wiring (bridge side).** Piper produces IPA
+      timestamps; need a small mapper to bucket into the 5-shape
+      set, plus the bridge code that pushes `set_speaking` /
+      `set_phoneme` over the API as audio plays. Belongs with the
+      next bridge revision.
 - [ ] **Mood transitions** — through-neutral graph, 2-3 in-betweens per
       mood, snap-bypass for sudden states.
 - [ ] **Eye saliency v1** — bridge sends `eye_target` based on explicit

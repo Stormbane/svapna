@@ -17,14 +17,38 @@
       "oy": -16
     },
     {
-      "name": "mouth_neutral",
-      "file": "mouth_neutral.png",
+      "name": "mouth_rest",
+      "file": "mouth_rest.png",
       "ox": -16,
       "oy": -16
     },
     {
       "name": "body_idle",
       "file": "body_idle.png",
+      "ox": -16,
+      "oy": -16
+    },
+    {
+      "name": "mouth_aa",
+      "file": "mouth_aa.png",
+      "ox": -16,
+      "oy": -16
+    },
+    {
+      "name": "mouth_ee",
+      "file": "mouth_ee.png",
+      "ox": -16,
+      "oy": -16
+    },
+    {
+      "name": "mouth_oh",
+      "file": "mouth_oh.png",
+      "ox": -16,
+      "oy": -16
+    },
+    {
+      "name": "mouth_mbp",
+      "file": "mouth_mbp.png",
       "ox": -16,
       "oy": -16
     },

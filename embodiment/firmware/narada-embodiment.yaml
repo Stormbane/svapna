@@ -32,21 +32,18 @@ esphome:
   includes:
     - include/atlas_test_atlas.h
     - include/compositor.h
+    - include/state_machine.h
   on_boot:
     priority: -100
     then:
       - lambda: |-
           using namespace narada;
-          narada::comp().set_atlas(test_atlas_frames, test_atlas_pixels, TA_FRAME_COUNT);
-          narada::comp().set_bg_color(0x18C3);  // ~Color(20, 20, 30) in RGB565
-          // Default neutral face. Anchors are screen-center positions;
-          // the atlas's (ox, oy) convert anchor → top-left at blit time.
-          narada::comp().set_layer(LAYER_BODY,      TA_BODY_IDLE,      160, 180);
-          narada::comp().set_layer(LAYER_MOOD,      TA_MOOD_NEUTRAL,   160, 130);
-          narada::comp().set_layer(LAYER_EYE_LEFT,  TA_EYE_LEFT,       136,  96);
-          narada::comp().set_layer(LAYER_EYE_RIGHT, TA_EYE_RIGHT,      184,  96);
-          narada::comp().set_layer(LAYER_MOUTH,     TA_MOUTH_NEUTRAL,  160, 146);
-          ESP_LOGI("comp", "boot scene staged: neutral face on dark bg");
+          comp().set_atlas(test_atlas_frames, test_atlas_pixels, TA_FRAME_COUNT);
+          comp().set_bg_color(0x18C3);  // ~Color(20, 20, 30) in RGB565
+          // State machine pushes the default state (neutral, not
+          // speaking, gaze centered, no glyph) into the compositor.
+          sm().apply_all();
+          ESP_LOGI("comp", "boot scene staged via state machine");
 
 esp32:
   board: esp32s3box
@@ -83,20 +80,51 @@ ota:
 
 api:
   services:
-    - service: set_face
+    # ---- High-level (state-machine) API — preferred for the bridge ----
+    - service: set_mood
       variables:
-        eye_l: int
-        eye_r: int
-        mouth: int
-        body: int
+        mood: int   # 0=neutral, 1=curious, 2=focused
       then:
         - lambda: |-
             using namespace narada;
-            narada::comp().set_layer(LAYER_EYE_LEFT,  (uint16_t) eye_l, 136,  96);
-            narada::comp().set_layer(LAYER_EYE_RIGHT, (uint16_t) eye_r, 184,  96);
-            narada::comp().set_layer(LAYER_MOUTH,     (uint16_t) mouth, 160, 146);
-            narada::comp().set_layer(LAYER_BODY,      (uint16_t) body,  160, 180);
-            ESP_LOGI("comp", "set_face: el=%d er=%d m=%d b=%d", eye_l, eye_r, mouth, body);
+            sm().set_mood((Mood) mood);
+            ESP_LOGI("sm", "mood=%d", mood);
+    - service: set_speaking
+      variables:
+        speaking: bool
+      then:
+        - lambda: |-
+            using namespace narada;
+            sm().set_speaking(speaking);
+            ESP_LOGD("sm", "speaking=%d", (int) speaking);
+    - service: set_phoneme
+      variables:
+        phoneme: int   # 0=rest, 1=AA, 2=EE, 3=OH, 4=MBP
+      then:
+        - lambda: |-
+            using namespace narada;
+            sm().set_phoneme((Phoneme) phoneme);
+            // No log per phoneme — too chatty during speech.
+    - service: set_gaze
+      variables:
+        gx: float   # -1.0 .. +1.0
+        gy: float
+      then:
+        - lambda: |-
+            using namespace narada;
+            sm().set_gaze(gx, gy);
+    - service: set_glyph
+      variables:
+        visible: bool
+        x: int
+        y: int
+      then:
+        - lambda: |-
+            using namespace narada;
+            sm().set_glyph_visible(visible, (int16_t) x, (int16_t) y);
+            ESP_LOGI("sm", "glyph=%d at (%d,%d)", (int) visible, x, y);
+
+    # ---- Low-level (direct compositor) API — testing / debug only ----
     - service: set_layer
       variables:
         layer: int
@@ -106,38 +134,13 @@ api:
       then:
         - lambda: |-
             using namespace narada;
-            narada::comp().set_layer((LayerId) layer, (uint16_t) frame, (int16_t) x, (int16_t) y);
+            comp().set_layer((LayerId) layer, (uint16_t) frame, (int16_t) x, (int16_t) y);
             ESP_LOGI("comp", "set_layer: id=%d frame=%d at (%d,%d)", layer, frame, x, y);
-    - service: set_mood
-      variables:
-        mood: int
-      then:
-        - lambda: |-
-            using namespace narada;
-            uint16_t f = TA_MOOD_NEUTRAL;
-            if (mood == 1) f = TA_MOOD_CURIOUS;
-            else if (mood == 2) f = TA_MOOD_FOCUSED;
-            narada::comp().set_layer(LAYER_MOOD, f, 160, 130);
-            ESP_LOGI("comp", "set_mood: %d", mood);
-    - service: set_glyph
-      variables:
-        visible: bool
-        x: int
-        y: int
-      then:
-        - lambda: |-
-            using namespace narada;
-            if (visible) {
-              narada::comp().set_layer(LAYER_MARG_1, TA_GLYPH_DOT, (int16_t) x, (int16_t) y);
-            } else {
-              narada::comp().clear_layer(LAYER_MARG_1);
-            }
-            ESP_LOGI("comp", "set_glyph: visible=%d at (%d,%d)", (int) visible, x, y);
     - service: clear_face
       then:
         - lambda: |-
             using namespace narada;
-            for (uint8_t i = 0; i < LAYER_COUNT; i++) narada::comp().clear_layer((LayerId) i);
+            for (uint8_t i = 0; i < LAYER_COUNT; i++) comp().clear_layer((LayerId) i);
             ESP_LOGI("comp", "cleared all layers");
 
 # Per-frame perf counters. The Compositor itself is a Meyer's

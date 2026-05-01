@@ -99,11 +99,19 @@ def main() -> None:
     frames: list[dict] = []
 
     # Face items at 32×32, color-coded.
+    # Mouth has 5 placeholder shapes (Preston-Blair-style minus the
+    # rare ones) so we can wire phonemes end-to-end before real art:
+    #   mouth_rest = relaxed default, mouth_aa = wide open,
+    #   mouth_ee = smile, mouth_oh = rounded, mouth_mbp = closed/pursed.
     face_specs = [
         ("eye_left",       (60, 100, 220), "0"),
         ("eye_right",      (60, 100, 220), "1"),
-        ("mouth_neutral",  (200, 60, 100), "2"),
+        ("mouth_rest",     (200, 60, 100), "2"),
         ("body_idle",      (60, 180, 100), "3"),
+        ("mouth_aa",       (220, 90, 110), "4"),
+        ("mouth_ee",       (200, 100, 90), "5"),
+        ("mouth_oh",       (180, 70, 110), "6"),
+        ("mouth_mbp",      (160, 50, 100), "7"),
     ]
     for name, color, label in face_specs:
         img = make_solid(name, (32, 32), color, label)

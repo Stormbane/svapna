@@ -1,35 +1,30 @@
 #!/usr/bin/env python
 """Driver for narada-embodiment.yaml — Phase 2 firmware control.
 
-Until the state machine + bridge integration land, this script is how
-we drive scenes by hand:
+Talks to the state-machine API. The bridge will eventually drive
+these same services; for now this is how we exercise them by hand.
 
-    python scripts/embodiment_control.py mood neutral
-    python scripts/embodiment_control.py mood curious
-    python scripts/embodiment_control.py glyph on 280 30
-    python scripts/embodiment_control.py glyph off
-    python scripts/embodiment_control.py face <el> <er> <m> <b>
-    python scripts/embodiment_control.py clear
+Commands:
 
-Frame IDs (test_atlas, sorted alphabetically):
+    python scripts/embodiment_control.py mood neutral|curious|focused
+    python scripts/embodiment_control.py speaking on|off
+    python scripts/embodiment_control.py phoneme rest|aa|ee|oh|mbp
+    python scripts/embodiment_control.py gaze <gx> <gy>          # -1..+1 each
+    python scripts/embodiment_control.py glyph on|off [x] [y]
+    python scripts/embodiment_control.py clear                   # all layers
+    python scripts/embodiment_control.py demo                    # mood + glyph
+    python scripts/embodiment_control.py speak                   # phoneme cycle
+    python scripts/embodiment_control.py gaze-loop               # eye tracking demo
 
-    0  body_idle
-    1  eye_left
-    2  eye_right
-    3  glyph_dot
-    4  mood_curious
-    5  mood_focused
-    6  mood_neutral
-    7  mouth_neutral
-
-(See `embodiment/firmware/include/atlas_test_atlas.h` enum for the
-canonical list. The order is alphabetical; build_atlas.py sorts.)
+    # Low-level (direct compositor poke, debug):
+    python scripts/embodiment_control.py layer <id> <frame> <x> <y>
 
 Set HOST=<ip> if mDNS doesn't resolve (we have mdns disabled).
 """
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import sys
 
@@ -38,7 +33,8 @@ import aioesphomeapi
 HOST = os.environ.get("HOST", "narada-embodiment.local")
 PORT = int(os.environ.get("PORT", "6053"))
 
-MOOD_FRAME = {"neutral": 0, "curious": 1, "focused": 2}
+MOOD = {"neutral": 0, "curious": 1, "focused": 2}
+PHONEME = {"rest": 0, "aa": 1, "ee": 2, "oh": 3, "mbp": 4}
 
 
 async def get_services(api: aioesphomeapi.APIClient) -> dict:
@@ -66,12 +62,34 @@ async def main() -> None:
 
         if cmd == "mood":
             name = sys.argv[2] if len(sys.argv) > 2 else "neutral"
-            n = MOOD_FRAME.get(name)
+            n = MOOD.get(name)
             if n is None:
-                print(f"unknown mood: {name}; one of {list(MOOD_FRAME)}")
+                print(f"unknown mood: {name}; one of {list(MOOD)}")
                 sys.exit(1)
             await api.execute_service(svc["set_mood"], {"mood": n})
             print(f"mood -> {name}")
+
+        elif cmd == "speaking":
+            on = (sys.argv[2] if len(sys.argv) > 2 else "on") == "on"
+            await api.execute_service(svc["set_speaking"], {"speaking": on})
+            print(f"speaking -> {on}")
+
+        elif cmd == "phoneme":
+            name = sys.argv[2] if len(sys.argv) > 2 else "rest"
+            n = PHONEME.get(name)
+            if n is None:
+                print(f"unknown phoneme: {name}; one of {list(PHONEME)}")
+                sys.exit(1)
+            await api.execute_service(svc["set_phoneme"], {"phoneme": n})
+            print(f"phoneme -> {name}")
+
+        elif cmd == "gaze":
+            if len(sys.argv) < 4:
+                print("usage: gaze <gx> <gy>   (each in -1.0 .. +1.0)")
+                sys.exit(1)
+            gx, gy = float(sys.argv[2]), float(sys.argv[3])
+            await api.execute_service(svc["set_gaze"], {"gx": gx, "gy": gy})
+            print(f"gaze -> ({gx:+.2f}, {gy:+.2f})")
 
         elif cmd == "glyph":
             sub = sys.argv[2] if len(sys.argv) > 2 else "on"
@@ -83,18 +101,9 @@ async def main() -> None:
             )
             print(f"glyph {sub} at ({x},{y})")
 
-        elif cmd == "face":
-            if len(sys.argv) < 6:
-                print("usage: face <eye_l> <eye_r> <mouth> <body>")
-                sys.exit(1)
-            args = {
-                "eye_l": int(sys.argv[2]),
-                "eye_r": int(sys.argv[3]),
-                "mouth": int(sys.argv[4]),
-                "body": int(sys.argv[5]),
-            }
-            await api.execute_service(svc["set_face"], args)
-            print(f"face -> {args}")
+        elif cmd == "clear":
+            await api.execute_service(svc["clear_face"], {})
+            print("cleared")
 
         elif cmd == "layer":
             if len(sys.argv) < 6:
@@ -109,16 +118,9 @@ async def main() -> None:
             await api.execute_service(svc["set_layer"], args)
             print(f"layer -> {args}")
 
-        elif cmd == "clear":
-            await api.execute_service(svc["clear_face"], {})
-            print("cleared")
-
         elif cmd == "demo":
-            # Cycle moods + glyph to show the compositor working.
             for m in ("neutral", "curious", "focused", "neutral"):
-                await api.execute_service(
-                    svc["set_mood"], {"mood": MOOD_FRAME[m]}
-                )
+                await api.execute_service(svc["set_mood"], {"mood": MOOD[m]})
                 print(f"mood -> {m}")
                 await asyncio.sleep(1.5)
             await api.execute_service(
@@ -130,6 +132,40 @@ async def main() -> None:
                 svc["set_glyph"], {"visible": False, "x": 0, "y": 0}
             )
             print("glyph off")
+
+        elif cmd == "speak":
+            # Cycle phonemes at ~12 Hz to simulate speech. Stand-in
+            # for the phoneme stream the bridge will eventually push.
+            await api.execute_service(svc["set_speaking"], {"speaking": True})
+            print("speaking on; cycling phonemes for 4 s")
+            ph_cycle = ["aa", "ee", "oh", "mbp", "aa", "rest"]
+            t_end = asyncio.get_event_loop().time() + 4.0
+            i = 0
+            while asyncio.get_event_loop().time() < t_end:
+                p = ph_cycle[i % len(ph_cycle)]
+                await api.execute_service(
+                    svc["set_phoneme"], {"phoneme": PHONEME[p]}
+                )
+                i += 1
+                await asyncio.sleep(0.08)
+            await api.execute_service(svc["set_speaking"], {"speaking": False})
+            print("speaking off")
+
+        elif cmd == "gaze-loop":
+            # Trace a gentle ellipse with the gaze for 4 s.
+            print("gaze loop for 4 s")
+            t_end = asyncio.get_event_loop().time() + 4.0
+            t0 = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() < t_end:
+                t = asyncio.get_event_loop().time() - t0
+                gx = math.cos(t * 2.0)
+                gy = 0.4 * math.sin(t * 2.0)
+                await api.execute_service(
+                    svc["set_gaze"], {"gx": gx, "gy": gy}
+                )
+                await asyncio.sleep(0.05)
+            await api.execute_service(svc["set_gaze"], {"gx": 0.0, "gy": 0.0})
+            print("gaze recentered")
 
         else:
             print(f"unknown command: {cmd}")
