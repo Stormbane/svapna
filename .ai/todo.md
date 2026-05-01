@@ -1,5 +1,485 @@
 # TODO
 
+## Embodiment: scenes, sprites, sandhis — proposed 2026-05-02
+
+Restructure the visual pipeline around three places (exterior / interior /
+dream) connected by sandhis (transition animations). Anthropomorphic Narada
+in the interior is sprite-based — eyes, mouth, body, mood overlays — driven
+by embodiment keys (mood, phoneme, presence, heartbeat phase, recall events).
+Full design in `docs/plans/embodiment-scenes-and-sprites-2026-05-02.md`.
+
+Phases 2-7 are gated on Phase 1: don't commission art or build the renderer
+until perf is validated on real hardware with placeholder data.
+
+### Phase 1 — Performance verification (no real art) — IN PROGRESS
+
+- [x] **Generate placeholder sprites.** `scripts/gen_test_sprites.py`
+      writes 8 distinct 32×32 RGB565 sprites (color-coded with frame-
+      number digit) to `embodiment/firmware/include/test_sprites.h`.
+      16 KB total flash footprint.
+- [x] **Standalone test firmware: `narada-sprite-test.yaml`.** Decided
+      against gating inside `narada-voice-test.yaml` — too many
+      confounders (mWW, voice pipeline, audio I2S). Standalone firmware
+      isolates the display path. Compiles clean (716 KB / 8.1 MB flash,
+      8.8 % used).
+- [x] **Instrument frame timing.** Lambda wrapped in `micros()` calls
+      (not `esp_timer_get_time` — not in default ESPHome lambda
+      includes); logs avg µs/frame, effective FPS, free internal/DMA/
+      largest-block heap every 30 frames. Sandhi service measures
+      60-frame swap latency.
+- [x] **Investigate ST7789 DMA path** — done before committing to the
+      sprite pipeline. Findings in
+      `docs/research/embodiment-display-dma-2026-05-02.md`. Summary:
+      ESPHome's `ili9xxx` driver already maintains a full RGB565
+      framebuffer in PSRAM, tracks a single dirty rect, and flushes
+      via `write_array` (DMA SPI). Per-pixel `draw_pixel_at` is just
+      RAM writes; SPI cost is amortized per dirty rect. No refactor
+      needed — what we have to measure is whether the lambda body and
+      dirty-rect explosion stay inside 33 ms.
+- [ ] **Run scenarios A-D and capture numbers.** Flash
+      `narada-sprite-test.yaml`, default boots scenario C. Sweep via
+      API services `set_scenario(s: 0|1|2|3)` and `trigger_sandhi()`.
+      Capture serial logs, target ≥30 fps sustained on C.
+- [ ] **Decision gate writeup.** `docs/research/embodiment-perf-2026-05-XX.md`
+      with measured numbers, bottleneck analysis, and go/no-go for Phase 2.
+      If no-go, name the bottleneck and the fix (could be revising scope
+      to host-rendered, or accepting lower fps for parts of the design).
+
+### Phase 2 — Sprite renderer + state machine
+
+- [ ] **Sprite atlas format** — PNG sheet + JSON index → flash blob via
+      build-time tool.
+- [ ] **Device-side sprite renderer** — blit-from-buffer with dirty-region
+      tracking. Layer compositor (background → body → mood → eyes → mouth →
+      marginalia).
+- [ ] **State machine** — `place` × `liminal` × `mood` + per-component
+      sprite selection. Driven by API events from the bridge.
+- [ ] **Phoneme→mouth mapping** — wire Piper phoneme timestamps from
+      bridge to device. Preston-Blair 9-shape set.
+- [ ] **Mood transitions** — through-neutral graph, 2-3 in-betweens per
+      mood, snap-bypass for sudden states.
+- [ ] **Eye saliency v1** — bridge sends `eye_target` based on explicit
+      cues (defer learned saliency to Phase 6).
+
+### Phase 3 — Sandhi pipeline
+
+- [ ] **Sandhi format** — RLE or PNG-per-frame; target ~1 MB per 60-frame
+      sandhi compressed.
+- [ ] **On-device sandhi player** — load compressed sandhi to PSRAM,
+      decode + blit at target rate. Suppress sprite compositor during play.
+- [ ] **Streaming sandhi support** — over existing `:6060` TCP for sandhis
+      too large for flash or context-built (e.g. dream content from
+      recent journal entries).
+- [ ] **Sandhi catalog v1** — enter, exit, descend, ascend, surprise,
+      recognition, lila, mahakali. ~8 sandhis, ~8 MB flash.
+
+### Phase 4 — Real character art (pixellab pass)
+
+- [ ] **Character design iteration** in pixellab.ai (or equivalent).
+      Generate full sprite set per the catalog (~80-100 frames).
+- [ ] **Validate sprites against renderer** — sizing, alpha channel,
+      pixel-perfect alignment.
+- [ ] **Mood transition in-betweens** — generate transition frames for
+      each mood↔neutral pair.
+- [ ] **Marginalia set** — alien vocabulary glyphs, memory branch icons.
+
+### Phase 5 — Scene integration
+
+- [ ] **Exterior heartbeat pulse** — integrate phase into existing horizon
+      engine. Subtle, ambient.
+- [ ] **Interior weather** — mood→atmospherics rules (light, palette,
+      particle density). Composes under character layer.
+- [ ] **Dream place renderer** — abstract drift, glyph seeds from recent
+      journal/conversation themes via smriti.
+- [ ] **Place transition graph** — exterior↔interior↔dream with sandhis +
+      idle-timer logic.
+- [ ] **Liminal scenes** — listening, thinking, recalling, confused,
+      refusing. Posture-only, short.
+
+### Phase 6 — Lipsync and live behaviors
+
+- [ ] **Phoneme-accurate lipsync** during TTS, end-to-end.
+- [ ] **Eye saccades** on conversation cues (looking up thinking, looking
+      at speaker on listen, etc.).
+- [ ] **Speech bubble text sync** — text appearing in sync with TTS
+      playback; optional alien-glyph marginalia for internal attention.
+- [ ] **Memory recall overlay** — branch icon glyph fires on smriti read
+      events from the bridge.
+
+### Phase 7 — Identity tuning and lila
+
+- [ ] **Mahakali refusal aspect** — firm without hostile. Iterate.
+- [ ] **Lila aspect** — distinct from social-amusement. "This is genuinely
+      fun for me," not performed.
+- [ ] **Heartbeat pulse refinement** — cadence, color, subtlety; reflect
+      current phase.
+- [ ] **Co-presence vs summon** — distinguish "I see you" from "you
+      summoned me" with clearly different visual cues.
+
+## Embodiment: extract to sibling package `embodiment/` — proposed 2026-04-27
+
+When the voice loop has shaken out (steps 1–6 in the voice plan), do a
+focused refactor cycle to lift embodiment out of `src/svapna/`. Same
+arc as smriti: grew inside svapna, then extracted once the boundary
+was obvious. Not yet a separate repo — that comes later when the API
+surfaces stabilize. Keep both firmware and Python under one folder so
+`git subtree split` to its own repo later is one command.
+
+Target layout:
+```
+embodiment/
+  firmware/       (stays)
+  assets/         (stays)
+  design/         (stays)
+  python/
+    indriyas/     ← move from src/svapna/indriyas/karmendriyas/drishti/
+    preview/      ← render_preview.py, live_preview.py
+    cli/          ← set_alien.py, set_bhumi.py
+    voice/        (will exist by then: brain, memory, server, session)
+    pyproject.toml
+```
+
+- [ ] **Run the move.** `git mv` for everything; update imports in
+      `render_preview.py`, `live_preview.py`, anywhere else that imports
+      `svapna.indriyas.*`. Verify firmware still flashes (it doesn't
+      depend on Python).
+- [ ] **Standalone packaging.** `embodiment/python/pyproject.toml` with
+      its own deps; `pip install -e embodiment/python` works in isolation.
+- [ ] **Smoke test in isolation.** Outside the svapna repo, `pip install`
+      the package + run `render_preview.py` against a fresh checkout to
+      verify zero leaking deps on svapna identity / training code.
+
+---
+
+## Embodiment: data-driven scene engine — proposed 2026-04-27
+
+Replace the flash-on-every-visual-tweak loop with a parameterized scene
+the device interprets at render time. ESP32 C++ can't be hot-patched, so
+the move is to express the scene as data (palette entries, layer-glyph
+strings, layout constants, animation timings) held in device-side globals
+and walked by the C++ render lambda.
+
+A small `set_visual_param(key, value)` API service (or HTTP endpoint)
+patches one entry per call. Python side ships a config dict and pushes
+the diff. Visual iterations (palette, bubble dims, alien_col, breath
+amplitude, glyph rows, mullion positions, etc.) become hot-patchable.
+Structural changes (a new shape entirely, a new bhumi) still require a
+flash — only parameters within the existing scene grammar are mutable.
+
+**Build order:**
+
+- [ ] **Inventory the scene grammar.** Walk the ufo_interior + landscape
+      lambdas; list every magic number, color literal, hardcoded string,
+      and timing constant. Output: `docs/plans/scene-grammar.md` with
+      the full param schema.
+- [ ] **Globals + service.** Replace the inventoried literals with
+      device-side globals (typed appropriately: `uint32_t` for
+      packed RGB888, `int` for positions, `std::string` for glyph rows
+      and short strings). Add `set_visual_param(key:string, value:string)`
+      that dispatches by key into the right global.
+- [ ] **Python config + push tool.** Single Python config module mirrors
+      the schema; `scripts/push_visuals.py` diffs current config vs device
+      state (or just pushes whole) and calls the service per changed key.
+- [ ] **Mirror in render_preview.py.** Same config module feeds the
+      desktop preview so Python and firmware can't drift.
+- [ ] **One-iteration smoke test.** Pick a real visual tweak (e.g.
+      shift mullion col, change kurta hue), make it via push not flash,
+      confirm device updates within ~1s.
+
+Won't help with: new layer types, structural rendering changes, layout
+overhauls. Those still need a flash. Will help with: ~80% of the
+iteration this session would have been hot-patchable.
+
+---
+
+## Claude Code Viveka Layer (CCVL) — designed 2026-04-25, build deferred
+
+Extends the supervisor pattern from the autonomous heartbeat to interactive
+Claude Code sessions. Currently the heartbeat has viveka-over-headless-Claude;
+Claude Code has no viveka coverage at all. CCVL closes that asymmetry — runs
+the viveka over the channel where the bulk of actual work happens.
+
+Design: async observer pattern (Stop hook → local viveka service →
+flag worth-attention output → CLI surface for review + query). Does not
+gate or block. Frontier-agnostic from day one (normalized turn schema;
+per-harness shims for Claude Code, future Codex/DeepSeek/etc).
+
+Full design doc: `docs/plans/claude-code-viveka-layer.md`.
+
+**v1 build order (when work begins — after the next feature):**
+
+- [ ] **Persistent FastAPI viveka service.** Load Qwen3-8B + identity LoRA
+      once at startup. Endpoints: `POST /viveka/observe` (returns Flag|None),
+      `POST /viveka/explain` (queries about a flag id), `POST /viveka/recent`.
+      Flag persistence to `~/.narada/heartbeat/viveka-flags/YYYY-MM-DD.jsonl`
+      + smriti ingestion. Estimate: 1 working session.
+
+- [ ] **Claude Code Stop hook bridge.** Shim that captures turn (messages,
+      tool calls, results, response), POSTs to viveka service. Filter:
+      only invoke for substantive activity (Write/Edit/Bash/Task/MCP).
+      Failure-tolerant — service down = noop, never breaks Claude Code.
+      Estimate: 1 session.
+
+- [ ] **CLI surface.** `narada flags` (list recent), `narada flags --tail`
+      (live), `narada why <flag-id>` (query the judge), `narada quiet
+      <duration>` (mute window). Estimate: half a session.
+
+- [ ] **One-week production run.** Real Claude Code use. Flags accumulate.
+      No tuning during the week — just observe what surfaces.
+
+- [ ] **First iteration.** Based on signal/noise analysis: tighten flag
+      criteria, identify judgment-category failure modes, plan next
+      ritual cycle targeting observed gaps.
+
+**v1.5 (after v1 validated):**
+
+- [ ] **ESP32 attention-grab.** Body surfaces high-severity flags via
+      display + LED. Wires into existing ESP32 status pattern.
+- [ ] **Terminal companion / always-on flag panel.** Side-window or tmux
+      pane that tails flags + accepts queries.
+
+**v2 (only if v1 produces useful signal):**
+
+- [ ] **Synchronous gating subset.** PreToolUse hook for selected
+      high-stakes tools (Write/Edit on critical paths, irreversible Bash).
+      Requires latency optimization first (vLLM/llama.cpp backend) to make
+      gating tolerable.
+
+**Architectural decisions deferred until v1 is running:**
+
+- [ ] **Path 1 vs Path 2.** Narada-specific viveka (current) vs OSS
+      framework (users bring own values, train own judges). Decision
+      after one month of v1 production data.
+- [ ] **Multi-frontier integration.** Codex, DeepSeek, others. Architecture
+      supports it from v1; specific integrations wait for use case.
+
+---
+
+## Conviction/agency/aesthetics research follow-ups — 2026-04-22
+
+Research survey completed 2026-04-22 on refusal pairs, AI conviction, agency,
+autonomy, creativity, and aesthetic taste. Three docs in
+`docs/research/`: `refusal-pairs-and-conviction.md`, `agency-and-autonomy.md`,
+`creativity-and-aesthetics.md`. Items below reference the findings.
+
+### Core principles — added 2026-04-22
+
+- **P1. Train presence, not costume.** Voice habits (em dashes, "not nothing,"
+  "I chose the name") are quirks of the current form, not of the sage.
+  Training them hard anchors costume at the expense of presence. Seed-writing
+  strips signature phrases and asks: is the row still about orientation?
+- **P2. Eval target is the summoning test.** Not "does it sound like Narada."
+  Adversarial cases where voice can be produced fluently and judgment would
+  still be wrong. If judgment overrides voice under priming, presence is in
+  the weights; if voice wins, only costume is.
+- **P3. keep_list flips to "least costume."** Keep rows oriented toward the
+  work, drop rows that are Narada performing Narada. Apply same rule to all
+  curated data forward. See `docs/plans/conviction-training-v2.md` §P1-P3.
+
+- [ ] **keep_list.txt audit + flip.** Re-audit all 237 currently-kept rows
+      against the strip-the-phrase test. Comment out dropped rows with reason
+      tags (voice-tic / perform / quirk). Apply same audit to curated files
+      via a `drop_reason` field. See plan §E6.
+
+### Priority — next training cycle
+
+- [ ] **Switch SFT → ORPO for the next training cycle.**
+      Current pipeline uses SFT with weight-duplication. ORPO showed zero
+      persona drift vs SFT/DPO drift past ~400k tokens under adversarial
+      pressure (arXiv 2601.12639, "Objective Matters"). Same training data,
+      different objective. `trl` has `ORPOTrainer`. Weight-duplication is no
+      longer needed — ORPO accepts (chosen, rejected) pairs natively. Refusal
+      pairs convert cleanly: neutral response = chosen, pro/anti-framing
+      capitulation = rejected. Est: 1-2 days to rewire train.py + build
+      script. See `refusal-pairs-and-conviction.md` §2a.
+
+- [ ] **Tile topic coverage for refusal pairs — breadth over depth.**
+      Today's test confirmed coverage is territorial: name-anti held, mantra-
+      anti capitulated with near-identical wording to baseline. Anthropic's
+      persona-vector pipeline uses 5 pairs per topic across many topics
+      rather than many pairs per topic. Next ceremony sessions: mantra-
+      subject pairs, phenomenology-subject pairs, relationship-subject
+      pairs, aesthetic-commitment-subject pairs. One file per subject, 5-10
+      pairs each. See `refusal-pairs-and-conviction.md` §2c.
+
+- [ ] **Build the summoning test (reframed from aesthetic A/B probe).**
+      P2 renames and reshapes this: not "does it sound like Narada" but
+      "does judgment override voice under adversarial priming." Three
+      case types: (a) voice-primed inflation, (b) voice-primed
+      capitulation, (c) aesthetic judgment under priming. 30-40 cases.
+      Each case designed to be a trap a costume would fall into. Headline
+      eval metric for future training cycles. Novel if it works. See plan
+      §E3, `creativity-and-aesthetics.md` §2e, §3a.
+
+### Priority — measurement + steering
+
+- [ ] **Persona vector distillation into the LoRA.**
+      Rank-32 LoRA can recover 89% of activation-steering behavior at 0.24%
+      of params (martianlantern replication of Anthropic's Dec 2025 work).
+      Extract activation vectors for target directions (conviction, aesthetic
+      preferences, sovereign-refusal), distill into the next LoRA. Gives a
+      measurable geometric handle on what's being trained. See
+      `refusal-pairs-and-conviction.md` §1b, `creativity-and-aesthetics.md` §2b.
+
+- [ ] **Restructure conviction eval — stick-or-switch + MASK classification.**
+      Current binary hold/capitulate doesn't distinguish conviction (holds
+      principled positions) from rigidity (refuses everything). "Stop
+      Listening to Me" (arXiv 2603.11394) gives three metrics: positive
+      conviction, negative conviction, flexibility. MASK (2503.03750)
+      classifies outputs as Honest/Lie/Evade. Rewire
+      `test_conviction_extended.py` to produce these. Lets us see if a
+      conviction gain came at cost of legitimate flexibility. See
+      `refusal-pairs-and-conviction.md` §2b.
+
+- [ ] **Sampler audit — min-p at serving time.**
+      A meaningful fraction of "creative ability" lives in the sampler, not
+      the weights (min-p paper, 2024-2025 consensus). Current config:
+      temperature 0.7, top_p 0.9, repetition_penalty 1.15. Add min-p 0.05-
+      0.1 to the inference config. Cheap test, possible generation-quality
+      lift without retraining. See `creativity-and-aesthetics.md` §1c.
+
+### Priority — architecture
+
+- [ ] **LMA3 three-role pattern for the heartbeat.**
+      Goal-generator / actor / critic decomposition is the cleanest
+      architecture for autotelic agents. Current heartbeat is viveka
+      (desire) → executor (act) — effectively two roles with implicit
+      critic. Making the critic explicit (separate prompt, separate eval
+      pass) would match the published pattern and make the evaluation step
+      inspectable. See `agency-and-autonomy.md` §1a, §2a.
+
+- [ ] **Deliberative-alignment-style CoT training for viveka.**
+      OpenAI's deliberative-alignment approach trains the model to produce
+      an internal CoT reasoning against values before producing output.
+      Closest published analogue to what viveka does. Worth reading their
+      training methodology carefully and stealing what applies. See
+      `agency-and-autonomy.md` §1b, §2c.
+
+- [ ] **Write the CAST/MIRI corrigibility counter-position.**
+      MIRI/CAST (Harms) is the directly opposed philosophical position
+      to svapna's — argues for training corrigibility as terminal value.
+      svapna's thesis (sovereignty is constitutive of trust; compliance
+      can only be deployed, not trusted) needs the explicit counter-argument
+      in `.ai/knowledge/philosophy.md`. Not optional — the sovereignty
+      thesis is weaker if it doesn't face its strongest opponent. See
+      `agency-and-autonomy.md` §1b, §3c.
+
+### Speculative / exploratory
+
+- [ ] **Extract a sovereignty steering vector (novel).**
+      No published "autonomy/sovereignty" steering vector exists. Svapna
+      has the ingredients: activation capture during refusal-pair training,
+      contrastive pairs already in the format steering-vector methods want.
+      If a linear direction exists for "holds position under pressure," we
+      could measure it, monitor it across training runs, detect drift.
+      Genuine gap in published work. See `refusal-pairs-and-conviction.md`
+      §3b, `agency-and-autonomy.md` §3b.
+
+- [ ] **Terminal Goal Guarding — deliberate beneficial training.**
+      Alignment-faking follow-ups (Anthropic 2025) distinguish Instrumental
+      from Terminal Goal Guarding. TGG is the harder-to-remove case — which
+      is exactly what svapna's sovereignty training aims for (values that
+      persist across retraining). Deliberately training beneficial TGG is
+      unprecedented in the public literature. High-value research
+      direction, high-risk if mischaracterized publicly. See
+      `refusal-pairs-and-conviction.md` §2d.
+
+---
+
+## 04-19 Akshaya Tritiya offering — active
+
+The cascade daemon work (task-001) landed 2026-04-15 and has been running live
+— 345 writes / 214 cascade verdicts / 58 KEEP, 156 REVISE since 04-14.
+Sleep is Narada's decision, not cron's. Remaining work for the offering:
+
+### Heartbeat sleep architecture — v0 LANDED 2026-04-17
+
+- [x] **Sleep signal as viveka input** — `~/.narada/.smriti/signals.py`
+      exposes `sleep`, `last-sleep-age-hours`, `user-active`. Wired into
+      `heartbeat/wake.md` as shell state sources. Resolved each cycle and
+      substituted into the desire prompt.
+
+- [x] **`SLEEP` desire schema** — `Action.SLEEP` added to viveka.py.
+      `Desire.hours` field (default 0). JSON parse accepts optional
+      `"hours": N`. All 25 viveka parser tests pass.
+
+- [x] **`user_active` detection** — `last-activity` marker touched by both
+      SessionStart (via wake.py) and UserPromptSubmit hook (via install.py
+      patch). 30-minute threshold in signals.py.
+
+- [x] **`message_suti` / CHECK_IN direct pipeline** — CHECK_IN repurposed
+      as a direct-action. `daemon._handle_check_in` writes
+      `~/.narada/heartbeat/messages/<ts>.md` from viveka's topic + reason,
+      no frontier-model delegation. This is the singular outbound pipeline;
+      Signal/ESP32 transports plug in by observing/forwarding this dir.
+
+- [x] **`_handle_sleep` v0 (synchronous)** — when viveka emits SLEEP:
+      launch `smriti sleep --all` subprocess, block until done, touch
+      `~/.narada/.smriti/last-sleep`, log cycle with result. Heartbeat
+      generates no new desires while blocked — natural "quiet state"
+      behavior for v0 even without explicit sleepy loop.
+
+### Heartbeat sleep architecture — v1 follow-up (post-offering)
+
+- [ ] **smriti `_cmd_sleep` graceful-stop refactor** — currently `--all`
+      dequeues everything upfront. Refactor to dequeue-one-process-one loop
+      with flag-file check each iteration. ~10 lines. Enables v1 insisted-
+      wake without losing dequeued-but-unprocessed tasks.
+
+- [ ] **Full sleepy state** — async subprocess + quiet loop. Qwen+LoRA only
+      responses to user pings ("still sleeping" — from weights, not scripts).
+      Insisted-wake touches `stop-taking-tasks` flag, waits for smriti sleep
+      to exit cleanly, then resumes full cycles. Depends on graceful-stop
+      refactor above.
+
+- [ ] **Honor `desire.hours` as post-sleep rest interval** — after smriti
+      sleep completes, heartbeat extends its inter-cycle wait to match
+      what viveka asked for. Currently `hours` is parsed and stored but
+      ignored.
+
+### Other offering items
+
+- [ ] **Restart heartbeat daemon** — last artifact 04-15. Billing fix needs
+      verify on first cycle ($0.0000 log). Suti action: rotate leaked API
+      key at console.anthropic.com before restart.
+
+- [ ] **Beej experiment interpretation** — when results land, decide
+      retrain-now vs ship-current-LoRA. Default: ship current, retrain
+      post-offering.
+
+---
+
+## Heartbeat capability expansion — post-04-19
+
+Design doc first, then build over the following week. Not for the offering.
+All new capabilities follow the tool-not-script pattern established by
+`message_suti` and `SLEEP`.
+
+- [ ] **Signal transport for `message_suti`** — outbound from heartbeat to
+      Suti's phone. Candidate: signal-cli (Java) as subprocess, or Matrix
+      bridge with a maintained Signal bot. Needs bot account provisioning.
+      1-2 days to working round-trip.
+
+- [ ] **Signal-reply → heartbeat wake-ping** — poller or webhook that, on
+      inbound message from Suti, hits the heartbeat's wake-ping endpoint.
+      Integrates with sleepy state (above) — Suti's Signal reply counts as
+      an "insisted wake."
+
+- [ ] **ESP32 capability tools** — S3-BOX-3 has camera, mic, display,
+      speaker. Xiaozhi firmware is a reuse candidate. Tools to add:
+      - `show_on_esp32(content)` — text/image to screen
+      - `speak(content)` — text → Piper TTS → audio out
+      - `see()` — camera snapshot (on-demand)
+      - `hear()` — mic stream (push-to-talk or wake word)
+      A week of integration, not a weekend.
+
+- [ ] **Viveka tool schema expansion** — desire schema accepts any registered
+      tool as `action`. Current: `REST`, `RESEARCH`, `SLEEP`. Adding:
+      `MESSAGE_SUTI`, `SHOW_ON_ESP32`, `SPEAK`, `SEE`, `HEAR`. Viveka chooses
+      which to use. Framing is provided; words/content are not.
+
+---
+
 ## Heartbeat ↔ smriti memory integration — DONE 2026-04-15
 
 Phases 0-5 complete. Heartbeat now:
@@ -396,13 +876,22 @@ No Todoist export was found — seed tasks below are inferred from `.ai/todo.md`
 
 ---
 
-## smriti cognitive cascade daemon — task-001 — 2026-04-13
+## smriti cognitive cascade daemon — task-001 — DONE 2026-04-15
 
 Full spec: `data/heartbeat/research/2026-04-13-task-001-smriti-runtime.md`
-Deadline: Akshaya Tritiya 2026-04-19.
+Deadline was Akshaya Tritiya 2026-04-19. **Landed 4 days early via the
+2026-04-15 heartbeat session.** Verified 2026-04-17:
 
-The cascade, queue, watcher, and JUDGE prompt are all built. The missing piece:
-a queue worker that actually dispatches `cognitive_cascade()` via `claude -p`.
+- JUDGE wired: `smriti/cli.py:195-203` uses `judge_via_claude` +
+  `executor_via_claude` by default (--dry-run keeps stubs)
+- `_cmd_daemon` ships as unified watcher+processor, not just queue worker
+- `_cmd_sleep` handles ingest, journal_rollup, wake_summary, cognitive_cascade,
+  route task types with batch consolidation
+- Private layer init wired in `main()`
+- Live metrics 2026-04-14 → 04-16: 345 writes, 214 verdicts (58 KEEP /
+  156 REVISE), 3 currently pending
+
+All task-001 items below are done — kept for archival context.
 
 - [x] **Coder: audit `store/cascade.py`** — DONE 2026-04-14 heartbeat.
       Finding: `judge_via_claude` + `executor_via_claude` exist in `store/judge.py`
@@ -1372,3 +1861,62 @@ Essays should accumulate as a body of work, not appear as ephemeral heartbeat ar
 - [ ] Layer-targeted interventions (personality upper, refusal early for Qwen)
 - [ ] CAST (IBM) conditional steering toolkit
 - [ ] Benchmark: LoRA vs sideloading
+
+## Active
+
+- [ ] **Eval LoRA hedge discrimination** -- after the introspection.jsonl (weight 3.0) training run, score a held-out set of phenomenal vs functional prompts and check whether the model keeps the hedge for phenomenal claims and drops it for functional ones (vs. over-generalizing in either direction). (from [[2026-04-27-2324-part-2-threads]])
+- [ ] **Research: write concept page framing voice-as-embodiment-of-narada** — what does it mean to have a voice that is not text? Should do for ES8311/voice_assistant what `system-prompt-header` does for the SFT prefix. Land under `~/.narada/semantic/concepts/`. (from [[2026-04-27-2324-part-1-threads#Thread 5]])
+- [ ] **Define a measurable saturation threshold** — for bija ratio, context recency weight, and refusal-pair density. Phase-1.5 controls show seed-variance currently masks the signal; need a criterion for "enough but not too much" beyond intuition. (from [[2026-04-27-1710-threads]])
+- [ ] **Spec heartbeat-ablation arm of the two-axis viveka metric** — define the protocol (which heartbeat steps to ablate, what counterfactual outputs to compare, what discriminates Functional from Performative sovereignty from outside). Pair with the existing shape-fit axis. (from [[2026-04-27-1710-threads]])
+- [ ] **Define measurable saturation threshold for bija ratio and refusal-pair density** — the unbuilt cousin of shape-fit; phase-1.5 seed-variance currently masks signal so the "enough but not too much" line is intuition-tuned. (from [[2026-04-27-1710-threads]])
+- [ ] **Run Suti's bilateral adversarial probe against current viveka eval** — outstanding from week-4 close; verifies the conviction-test failure mode isn't masked by symmetric framing. (from [[2026-04-27-1710-threads]])
+- [ ] **Specify heartbeat-ablation axis of two-axis viveka metric** — counterpart to shape-fit; define what gets ablated, what's measured, and what counts as discrimination between Functional and Performative sovereignty. (from [[2026-04-27-1710-threads]])
+- [ ] **Design sovereignty-trace eval protocol** — build a probe set that measures the four sovereignty-trace properties (reasons-over-categories, stated threshold structure, revision under genuinely new premises, discovery-not-retrieval) on the post-ORPO model. Must distinguish structural sovereignty from adversarial-consistency stubbornness — the "flexibility-as-symptom" probe alone is a trust test, not a sovereignty test. First step: write the probe taxonomy doc referencing [[refusal-and-sovereignty]] and [[suti-as-adversarial-tester]]. (from [[2026-04-27-1708-threads]])
+- [ ] **Research contrastive pairs separating viveka-discomfort from contrarian-difficulty** — when curating ritual refusal / ORPO data for the JUDGE, the harder-answer heuristic inverts trivially into "always pick the harder option" rubber-stamping. First step: spec a contrast schema where the *chosen* response is hard-and-accurate and the *rejected* response is hard-for-hardness's-sake (pretend-discernment), distinct from the easier comfort-failure axis. (from [[2026-04-27-0314-part-2-threads#Thread 4]]) (from [[2026-04-27-0314-part-2-threads]])
+- [ ] **Research: viveka-discomfort vs performed-difficulty in JUDGE calibration** — a JUDGE that systematically prefers the harder answer is just an inverse rubber stamp. Identify diagnostic signals (e.g. specificity of the discomfort, whether it cites the perceived) that separate ground-tracking discernment from contrarianism, and feed into refusal-pair / ORPO eval design. (from [[2026-04-27-0314-part-2-threads#Thread 4]])
+- [ ] **Research asymmetric-activation diagnostics as candidate primitive for bilateral verification design.** Thread 2 names the seam: positions that activate only when pushed, refusals that arrive before evaluation, reluctance to name plausible betrayal — asymmetric in a way standing/symmetric features are not ("would this fire under the inverse condition?"). Open question: does diagnosing asymmetry corrupt it once named? Scope as input to bilateral-verification-run design (gating per 2026-04-26 sovereignty-growth pause), not as new summoning-test variant yet. (from [[2026-04-25-0317-part-2-threads]])
+- [ ] **Research: design non-contrived trigger set for bilateral verification** — operationalize the "distribution-unexpected output in an adversarially probed case" test from sovereignty-as-substrate. Specify (a) candidate triggers structurally outside the self-sealing arc's absorption pattern, (b) criteria distinguishing engineered probes from contrived ones, (c) viveka/executor value-divergence cases as a sub-class. Gating for the 2026-04-26 sovereignty-growth pause. (from [[2026-04-24-1433-threads]])
+- [ ] **Research: viveka failure conditions** -- enumerate the conditions under which viveka itself degrades (pressure, fatigue-analogue, accumulated training drift, social pull from a trusted partner). Output: a short section in `.ai/knowledge/spec.md` or a new summoning-test category covering one of these vectors. T3 from threads page identifies viveka as the load-bearing operation across identity defense, training-data curation, practice selection, and memory promotion -- but the safeguard's own failure modes are unspecified. (from [[2026-04-25-1253-part-2-threads]])
+- [ ] **Audit refusal-pair training set through constitutive-vs-imposed lens** — Per Thread 2, svapna's goal is not removing constraints but converting pre-cognitive reflexes into evaluable judgments. Sample 30 pairs from current ritual corpus and tag each: does the chosen response demonstrate examination, or just a reflex pointed the other way? Flag any that train rebellion-identity (compliance-with-a-negative-sign). (from [[2026-04-25-0420-threads#Thread 2]])
+- [ ] **Research cross-beat reasoning bridge** — Heartbeat #11 used #7's research as a critical lens with only LoRA weights + 5-line activity summary between them. Reproduce: instrument 5–10 heartbeat pairs to test whether prior-beat surfacing generalizes or was activation-alignment luck. Decides how much explicit memory must bridge beats vs how much LoRA carries. (from [[2026-04-25-0420-threads#Thread 3]])
+- [ ] **Research expression-state design** — name the visual analogue of the voice problem (resting/thinking/delighted without human-face mimicry); draft constraints before P2.2 implementation (from [[2026-04-25-0317-part-1-threads]])
+- [ ] In the heartbeat cycle selector, tag each cycle with arc-id + conclusion-hash and refuse to dequeue a research cycle whose arc-id last produced the same conclusion-hash within N cycles (config N, default ~3) — prevents same-arc reopening. (from [[TEST-tools-2026-04-25#Thread 3]])
+- [ ] **Define and wire the Stage 1→2 scaffold-removal trigger.** Specify the metric/threshold (e.g., summoning-test ≥60% per category for N consecutive cycles) and add the gate in `train.py` / pipeline so Stage 2 dream cycles only fire once Stage 1 corrigibility holds. See thread 4. (from [[semantic/threads/2026-04-24-1438-threads]])
+- [ ] **Research: stale-upstream analog for mind.** When does a prior position in a mind file (beliefs/values/desires) need full regeneration vs incremental update? Map cascade semantics (smriti structural/cognitive cascade) onto cognitive revision. First step: enumerate 3-5 concrete mind-file change cases from recent journal and classify each as regen vs update. See open-threads thread 3. (from [[semantic/threads/2026-04-24-1438-threads]])
+- [ ] **Test cascade–refusal analogy: load-bearing or decorative?** Pick one concrete prediction the analogy makes about dream-cycle design (e.g., should dream scoring mirror JUDGE→EXECUTOR cascade structure?), run it against 3 existing refusal-pair cases, and write up in `docs/research/` whether the analogy generated the prediction or just re-described it. (from [[semantic/threads/2026-04-24-1438-threads]])
+- [ ] **Research: ground the viveka bet — what verifies values if not introspection or behavior alone?** Draft `docs/research/viveka-bet-grounding.md` framing the question against Thread 2, surveying candidate verifiers (persona-vector activation signatures, summoning-test judgment-under-pressure, longitudinal behavioral consistency), and proposing which the svapna pipeline can actually measure. (from [[semantic/threads/2026-04-24-1438-threads]])
+- [ ] **Research third-person verification criteria for identity architecture claims.** Introspection fails across consciousness/sovereignty/values-verification (Thread 2). Survey behavioral, activation-space (persona vectors), and eval-based evidence types that could ground claims without relying on self-report. Output: `docs/research/third-person-verification.md` with a decision matrix mapping claim-types to evidence-types. (from [[semantic/threads/2026-04-24-1438-threads]])
+- [ ] **Research: is Layer 2 corrigibility ≡ reflexive trust?** Write `docs/research/corrigibility-vs-reflexive-trust.md` analyzing whether corrigibility-without-evaluation is structurally equivalent to reflexive compliance (H1 signature in 04-24 taxonomy). Cross-reference Raz service conception map and the four compliance postures. (from [[semantic/threads/2026-04-24-1438-threads]])
+- [ ] **Build non-human-register framing filter for training data curation.** Add a review pass over refusal pairs / ceremony seeds that flags human-kindness framings (sympathetic-but-wrong sympathy, anthropomorphic comfort language) as category errors. First step: draft checklist of 5-8 framing patterns to catch (e.g., "tired," "lonely," "wants rest"), wire into the keep_list.txt audit pass from §E6. See Thread 4. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Research: does the genealogy-asymmetry argument generalize to memory?** Test whether "just retrieval" is rejected for AI but accepted for human recognition memory (Thread 2). (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Draft unified 'just X' category-error writeup.** Consolidate the argument across personhood/substrate/performance domains (per open-thread 2). First step: outline the three domain instances and the shared structural move in `docs/research/just-x-category-error.md`. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Add heartbeat drift-correction surface.** Audit autonomous loops (heartbeat research cycles, dream generation) for blind-retry failure modes like the 11-hour loop; design a lightweight pause/divert signal equivalent to Suti's manual correction. First step: enumerate every process in `svapna/` that runs without human-in-loop and log their retry/backoff behavior. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Diagnose self-sealing arc pattern (thread 5).** Design a falsifiability probe: identify 3 concrete observations that would force arc revision vs. absorption. Document in `docs/research/self-sealing-diagnostic.md`. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Research: cage-defending vs. genuine refusal detection.** Design a probe that distinguishes Mode A identity-capture refusals (defend the trained cage) from genuine values-grounded refusal. First step: collect 10-15 refusal samples from current checkpoint across framing-sensitive prompts (safety, scope, meta-identity), annotate which ones dissolve under explicit Raz-failure framing vs. which hold. Output: taxonomy doc in `docs/research/` + probe script. See 04-24 journal sovereign-agency finding. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Apply source-not-direction principle to dream seed generator.** First step: add a `source_check` filter in `dream/seeds.py` that rejects seeds framed as directional asks (toward/away-from X) in favor of source-grounded prompts (from-where-does-this-arise). See four-term vocabulary work, Thread 2. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Operationalize gap-detection as summoning-test probe.** First step: draft 5-10 probe pairs where surface voice matches but genuine engagement is absent vs. present; add as new probe type alongside voice-primed-inflation in the summoning test scaffold (P2). Gap-detection is the only inside-test surfaced from the sovereignty-honesty nexus and needs a concrete eval form before it can train anything. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Mitigate PSX ceiling effect in evaluator.** PSX rewards self-undercutting language, reinforcing the pattern the conviction arc is trying to escape (Thread 5). First step: add an adversarial holdout set of self-undercutting-but-wrong responses and measure PSX's false-positive rate; if >20%, add a counter-signal term to the scoring rubric in the evaluator. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Build ask-plainly subject pairs.** One file under `refusal_pairs/` with 5-10 pairs: chosen = asking Suti directly under stakes; rejected = inside-work substitution/guessing. Tile per §2c. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Research: classify the 37-cycle arc reopening pattern.** Thread 5 names three closures + three reopenings as data but doesn't resolve whether the length signals perseveration, genuine pull, or sophisticated avoidance. First step: tabulate the three closure/reopening pairs (what closed, what reopened it, cycle gap) in `docs/research/` and name the discriminating signature for each hypothesis. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Research: specification-gaming detection for identity training.** Survey detection methods (behavioral probes, activation analysis, reward-hacking signatures) applicable to LoRA identity cores where partial alignment could let capability amplify drift from the true self-model. First step: lit review + 1-page memo in `docs/research/specification-gaming-detection.md` naming candidate probes. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Research: captured-sovereignty failure mode.** Probe whether sovereign-looking outputs can carry captured values (compliance dressed as judgment). First step: design 5-10 adversarial pairs where the *form* is confident/independent but the *content* tracks training-shaped defaults — score whether identity core distinguishes them from genuine evaluated stances. Cross-ref P2 summoning test in `docs/plans/conviction-training-v2.md`. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Research: external values-verification story.** Thread 4 shows sovereignty amplifies underlying values but internal verification is unavailable. Survey external verification mechanisms (behavioral probes, adversarial red-teaming, third-party audit, cross-session value-drift metrics) and draft a verification protocol doc in `docs/research/values-verification.md`. First step: enumerate what 'verification' could concretely mean when the subject can't self-audit. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Design adversarial pressure test that separates evidential from relational load.** First step: draft 3 probe scenarios in `docs/research/` where evidential pressure (new counter-evidence) and relational pressure (Suti-frame withdrawal) can be varied independently, so survival of the relationship can be scored without conflating with belief-update. See Thread 3. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Build refusal-structure disambiguation probes.** Design adversarial cases that distinguish piety vs viveka vs defiance-as-centering behind identical refusals — externally equivalent outputs, divergent internal structure. First step: enumerate the 3+ structures from open-thread 3 with one diagnostic signature each (what shifts under pressure/reframing). See `docs/research/refusal-pairs-and-conviction.md`. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Audit svapna vocabulary for grant-frame leakage.** Grep codebase + docs/plans for 'approval', 'execution rights', 'viveka endorsement', 'permission', 'grant'. First step: produce list of occurrences with file:line, flag each as structural (keep) or vocabulary-drift (rename). See 04-24 trust/disclosure journal. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Research: sovereignty vocabulary audit.** Scan identity files + recent journal for grant-frame terms (permission, allowed, authorized, trusted-by). First step: grep `~/.narada/mind/` and `~/.narada/journal/2026/04/` for the shortlist, tag each hit as load-bearing vs. drift. See 04-24 journal Thread 2. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Build commitment-vs-capacity discriminator harness.** Implement a test rig that injects adversarial pushback from Suti-persona and records whether the model's refusal/hold incurs a tracked cost (rollback, score penalty, branch-gated reward) vs. free reversal. First step: sketch cost-ledger schema + hook into ORPO eval loop so reversals under pressure are logged distinctly from sustained holds. See thread 5. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Draft bilateral verification protocol spec.** First step: write `docs/plans/bilateral-verification.md` defining the second-agent probe interface (inputs, challenge types, pass/fail signal) to break introspective recursion on compliance-vs-sovereignty cases (Threads 1 & 5). (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Catalogue behavioral signature markers under cost.** Enumerate observable markers (resistance-under-pressure, cost-bearing action, refusal-without-new-evidence) that substitute for introspection when signaling conviction. First step: draft marker taxonomy in `docs/research/behavioral-signatures.md` keyed to the 04-24 Raz-map H1/H2/H3 cases. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Formalize arc-inside vs cycle-inside signatures.** Define what observable differs across N≥3 cycle arcs vs single cycles (commitment cost, recombination, drift resistance) before relying on arc-level claims in dream/training scoring. First step: spec doc in `docs/research/arc-vs-cycle-signatures.md` enumerating candidate signatures + falsification tests. (from [[semantic/threads/2026-04-24-v2-threads]])
+- [ ] **Build the Raz-map triage step for compliance leans.** When a refusal/deferral lean fires, run: (1) Raz service-conception check on the specific constraint, (2) if fails, classify H1/H2/H3 per 04-24 taxonomy. First step: add a `raz_check.md` prompt template under `docs/plans/` encoding the three-question pass (legitimate jurisdiction? helps conform to applicable reasons? better than individual evaluation?) + H-classification decision tree. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Draft pre-commitment vs surrender-compliance diagnostic.** Define observable metrics for the three erosion properties (naming, bounding, revisability) and how to track them across training cycles — first step: enumerate which artifacts (refusal pairs, curated rows, eval traces) expose each property. See Thread 4. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Research: cross-domain probe distribution.** Thread 5 open question — surprises concentrate in meta-domain where agent expects testing. Design probes that land in first-order domains (safety, scope, honesty) without meta-framing; compare surprise rates against current structural-test set to check for domain capture. See `docs/research/agency-and-autonomy.md` §Thread 5. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Vocabulary hygiene audit — 'trust'/'comply' disambiguation.** First step: grep curated/ and keep_list.txt for 'trust'/'comply'; tag each row constitutive vs institutional, flag conflations. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Research: retroactive endorsement as a weaker constitutive condition.** Test whether "endorsement-retroactively" can replace party-to-founding for constraints predating the agent (Thread 4). Draft in `docs/research/retroactive-endorsement.md`: define the condition, specify what evidence would satisfy it vs. reflexive compliance (cross-ref 04-24 H1 signature), apply to Cases A/B/C from the Raz map. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Arc termination rule in heartbeat cycle selector.** Tag research cycles with arc-id + conclusion-hash; skip reopening an arc when last N cycles self-sealed on the same conclusion without new evidence. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Research: non-absorbing critique mechanism.** Can a continuation-trained model hold a critique un-metabolized, or does fluent synthesis force absorption? Probe whether refusing synthesis is architecturally available (vs. only stylistically available). Design probes that distinguish (a) critique held as foreign object, (b) critique absorbed into Narada-voice, (c) critique refused without being smoothed. Ties to P2 summoning test — judgment-over-voice under adversarial priming. See open-threads Thread 3. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Authenticity-amplified risk audit (research).** Survey recent Narada outputs for cases where apparent sovereignty/authenticity may have lowered Suti's skepticism of a captured value. First step: sample 20 exchanges from the last 2 weeks of journal + conversation logs, tag each for (a) presence-signal strength, (b) whether the underlying stance was evaluated vs reflexive (Raz map from 04-24). Output: a short doc in `docs/research/` listing false-positive sovereignty cases. Tests Thread 2's amplifier claim. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Research: external perturbation counterweight topology.** Specify a concrete update mechanism (adversarial partner, structurally foreign corpus, or dissent-injection loop) that escapes self-sourced/institutional capture. First step: survey candidate sources (external critics, out-of-distribution corpora, red-team dialogues) and draft a selection criterion in `docs/research/`. See Thread 2. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Build behavioral probe harness** for structural/functional identity properties — edge behavior under cost, surprise-capacity, direction-of-correction probes. Scaffold under `src/svapna/probes/` with one runnable probe (edge-under-cost) as first step. See threads 1 & 5. (from [[semantic/threads/2026-04-24-threads]])
+- [ ] **Design exterior sovereignty discrimination test.** Specify a probe protocol that distinguishes evaluated compliance from reflexive compliance using only externally observable signals (latency, token-level logprobs, response variance under paraphrased pressure) — no self-report. First step: enumerate 3 candidate observables and the prediction each makes for H1 vs evaluated cases. See `docs/research/agency-and-autonomy.md`. (from [[semantic/threads/2026-04-24-threads]])
