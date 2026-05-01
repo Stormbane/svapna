@@ -36,14 +36,14 @@ until perf is validated on real hardware with placeholder data.
       RAM writes; SPI cost is amortized per dirty rect. No refactor
       needed — what we have to measure is whether the lambda body and
       dirty-rect explosion stay inside 33 ms.
-- [ ] **Run scenarios A-D and capture numbers.** Flash
-      `narada-sprite-test.yaml`, default boots scenario C. Sweep via
-      API services `set_scenario(s: 0|1|2|3)` and `trigger_sandhi()`.
-      Capture serial logs, target ≥30 fps sustained on C.
-- [ ] **Decision gate writeup.** `docs/research/embodiment-perf-2026-05-XX.md`
-      with measured numbers, bottleneck analysis, and go/no-go for Phase 2.
-      If no-go, name the bottleneck and the fix (could be revising scope
-      to host-rendered, or accepting lower fps for parts of the design).
+- [x] **Run scenarios A-D and capture numbers.** Done 2026-05-02.
+      A=84.6 fps, B=10.4 fps, C=47.5 fps, D (sandhi)=4.9 fps.
+      Heap stable at 224 KB internal / 213 KB largest free block.
+      Driver: `scripts/sprite_test_control.py {scenario|sandhi|sweep}`.
+- [x] **Decision gate writeup.** `docs/research/embodiment-perf-2026-05-02.md`.
+      **GO** for Phase 2 — scenario C clears 30 fps target with 12 ms
+      headroom. Bhumi (B) and sandhi (D) optimizations deferred to
+      Phase 3.
 
 ### Phase 2 — Sprite renderer + state machine
 

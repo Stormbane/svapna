@@ -41,6 +41,7 @@ esphome:
       - lambda: |-
           ESP_LOGI("sprite", "test sprites loaded: %d frames at %dx%d each",
                    TEST_SPRITE_COUNT, TEST_SPRITE_SIZE, TEST_SPRITE_SIZE);
+      - script.execute: alloc_bhumi
 
 esp32:
   board: esp32s3box
@@ -71,6 +72,12 @@ wifi:
 
 mdns:
   disabled: true
+
+# Enable OTA flashing — saves the COM3-handoff dance during Phase 1
+# iteration. No password: this firmware exists for one purpose and only
+# runs on Suti's bench.
+ota:
+  - platform: esphome
 
 api:
   services:
@@ -140,6 +147,10 @@ script:
   - id: alloc_bhumi
     then:
       - lambda: |-
+          // Idempotent: skip if buffer already exists. Earlier version
+          // leaked 150 KB of PSRAM per call because the on-boot interval
+          // didn't gate properly.
+          if (id(bhumi_buffer) != nullptr) return;
           static const uint32_t FRAME_BYTES = 320u * 240u * 2u;
           id(bhumi_buffer) = (uint8_t*) heap_caps_malloc(
               FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -156,17 +167,6 @@ script:
           }
           ESP_LOGI("sprite", "bhumi buffer allocated and filled (%u bytes)",
                    (unsigned) FRAME_BYTES);
-
-interval:
-  - interval: 100ms
-    startup_delay: 2s
-    then:
-      - script.execute: alloc_bhumi
-      - lambda: |-
-          // One-shot: stop after first run.
-          static bool done = false;
-          if (done) return;
-          done = true;
 
 spi:
   clk_pin: 7
