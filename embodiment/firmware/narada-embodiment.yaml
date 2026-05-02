@@ -83,12 +83,13 @@ api:
     # ---- High-level (state-machine) API — preferred for the bridge ----
     - service: set_mood
       variables:
-        mood: int   # 0=neutral, 1=curious, 2=focused
+        mood: int    # 0=neutral, 1=curious, 2=focused
+        snap: bool   # true = skip through-neutral animation
       then:
         - lambda: |-
             using namespace narada;
-            sm().set_mood((Mood) mood);
-            ESP_LOGI("sm", "mood=%d", mood);
+            sm().set_mood((Mood) mood, snap);
+            ESP_LOGI("sm", "mood=%d snap=%d", mood, (int) snap);
     - service: set_speaking
       variables:
         speaking: bool
@@ -174,6 +175,7 @@ display:
     update_interval: 33ms
     lambda: |-
       uint32_t t0 = micros();
+      narada::sm().tick(t0);
       narada::comp().render(it);
       uint32_t t1 = micros();
       id(lambda_us_total) = id(lambda_us_total) + (uint64_t)(t1 - t0);

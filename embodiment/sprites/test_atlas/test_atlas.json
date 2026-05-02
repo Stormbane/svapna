@@ -71,6 +71,42 @@
       "oy": -24
     },
     {
+      "name": "mood_curious_t1",
+      "file": "mood_curious_t1.png",
+      "ox": -24,
+      "oy": -24
+    },
+    {
+      "name": "mood_curious_t2",
+      "file": "mood_curious_t2.png",
+      "ox": -24,
+      "oy": -24
+    },
+    {
+      "name": "mood_curious_t3",
+      "file": "mood_curious_t3.png",
+      "ox": -24,
+      "oy": -24
+    },
+    {
+      "name": "mood_focused_t1",
+      "file": "mood_focused_t1.png",
+      "ox": -24,
+      "oy": -24
+    },
+    {
+      "name": "mood_focused_t2",
+      "file": "mood_focused_t2.png",
+      "ox": -24,
+      "oy": -24
+    },
+    {
+      "name": "mood_focused_t3",
+      "file": "mood_focused_t3.png",
+      "ox": -24,
+      "oy": -24
+    },
+    {
       "name": "glyph_dot",
       "file": "glyph_dot.png",
       "ox": -8,

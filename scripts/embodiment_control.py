@@ -62,12 +62,15 @@ async def main() -> None:
 
         if cmd == "mood":
             name = sys.argv[2] if len(sys.argv) > 2 else "neutral"
+            snap = "snap" in sys.argv[3:]
             n = MOOD.get(name)
             if n is None:
                 print(f"unknown mood: {name}; one of {list(MOOD)}")
                 sys.exit(1)
-            await api.execute_service(svc["set_mood"], {"mood": n})
-            print(f"mood -> {name}")
+            await api.execute_service(
+                svc["set_mood"], {"mood": n, "snap": snap}
+            )
+            print(f"mood -> {name}{' (snap)' if snap else ''}")
 
         elif cmd == "speaking":
             on = (sys.argv[2] if len(sys.argv) > 2 else "on") == "on"
@@ -120,8 +123,12 @@ async def main() -> None:
 
         elif cmd == "demo":
             for m in ("neutral", "curious", "focused", "neutral"):
-                await api.execute_service(svc["set_mood"], {"mood": MOOD[m]})
+                await api.execute_service(
+                    svc["set_mood"], {"mood": MOOD[m], "snap": False}
+                )
                 print(f"mood -> {m}")
+                # Through-neutral animation is up to ~640 ms; sleep long
+                # enough to let it complete before the next mood change.
                 await asyncio.sleep(1.5)
             await api.execute_service(
                 svc["set_glyph"], {"visible": True, "x": 280, "y": 30}

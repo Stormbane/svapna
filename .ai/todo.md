@@ -80,8 +80,13 @@ Design: `docs/plans/embodiment-phase2-design-2026-05-02.md`.
       set, plus the bridge code that pushes `set_speaking` /
       `set_phoneme` over the API as audio plays. Belongs with the
       next bridge revision.
-- [ ] **Mood transitions** — through-neutral graph, 2-3 in-betweens per
-      mood, snap-bypass for sudden states.
+- [x] **Mood transitions.** Through-neutral animation graph: each
+      non-neutral mood has 3 in-between frames (`mood_X_t1/t2/t3`),
+      played forward entering, reverse leaving. Mood A → B routes
+      through neutral when both are non-neutral. `snap=true` flag on
+      `set_mood` bypasses the animation for sudden states. 80 ms/step
+      = ~320 ms simple, ~640 ms through-neutral. Driven by
+      `sm().tick(now_us)` from the display lambda; cheap when idle.
 - [ ] **Eye saliency v1** — bridge sends `eye_target` based on explicit
       cues (defer learned saliency to Phase 6).
 

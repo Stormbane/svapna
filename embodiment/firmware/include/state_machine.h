@@ -61,10 +61,24 @@ struct Anchors {
 
 class StateMachine {
  public:
-  void set_mood(Mood m) {
+  // How long each mood-transition in-between frame holds.
+  static constexpr uint32_t MOOD_STEP_US = 80000;  // 80 ms
+
+  // Set mood with optional snap. snap=true skips the through-neutral
+  // animation — useful for sudden states (alarm / surprise) the bridge
+  // wants visible immediately. Default snap=false animates smoothly.
+  void set_mood(Mood m, bool snap = false) {
     if (m == mood_) return;
+    Mood prev = mood_;
     mood_ = m;
-    push_mood_();
+    if (snap) {
+      mood_anim_count_ = 0;
+      push_mood_immediate_();
+      return;
+    }
+    build_mood_anim_(prev, m);
+    mood_anim_step_ = 0;
+    mood_anim_next_us_ = 0;  // first step fires on next tick
   }
 
   // Set whether Narada is currently uttering audio. When false the
@@ -103,10 +117,29 @@ class StateMachine {
   // stage the default scene.
   void apply_all() {
     push_body_();
-    push_mood_();
+    push_mood_immediate_();
     push_eyes_();
     push_mouth_();
     push_glyph_();
+  }
+
+  // Advance time-based animations. Called from the display lambda
+  // each frame with `micros()`. Cheap when no animation is running.
+  void tick(uint32_t now_us) {
+    if (mood_anim_count_ == 0) return;
+    if (mood_anim_next_us_ != 0 &&
+        (int32_t)(now_us - mood_anim_next_us_) < 0) return;
+
+    if (mood_anim_step_ < mood_anim_count_) {
+      uint16_t f = mood_anim_frames_[mood_anim_step_];
+      comp().set_layer(LAYER_MOOD, f, Anchors::MOOD_X, Anchors::MOOD_Y);
+      mood_anim_step_++;
+      mood_anim_next_us_ = now_us + MOOD_STEP_US;
+    } else {
+      // Animation done — ensure we land on the canonical mood frame.
+      mood_anim_count_ = 0;
+      push_mood_immediate_();
+    }
   }
 
   Mood mood() const { return mood_; }
@@ -118,14 +151,56 @@ class StateMachine {
     comp().set_layer(LAYER_BODY, TA_BODY_IDLE, Anchors::BODY_X, Anchors::BODY_Y);
   }
 
-  void push_mood_() {
-    uint16_t f = TA_MOOD_NEUTRAL;
-    switch (mood_) {
-      case MOOD_NEUTRAL: f = TA_MOOD_NEUTRAL; break;
-      case MOOD_CURIOUS: f = TA_MOOD_CURIOUS; break;
-      case MOOD_FOCUSED: f = TA_MOOD_FOCUSED; break;
+  static uint16_t mood_endpoint_frame_(Mood m) {
+    switch (m) {
+      case MOOD_CURIOUS: return TA_MOOD_CURIOUS;
+      case MOOD_FOCUSED: return TA_MOOD_FOCUSED;
+      default:           return TA_MOOD_NEUTRAL;
     }
-    comp().set_layer(LAYER_MOOD, f, Anchors::MOOD_X, Anchors::MOOD_Y);
+  }
+
+  // Transition frame for stepping through mood ↔ neutral.
+  // step ∈ {1, 2, 3}; closer-to-neutral → closer-to-mood as step grows.
+  static uint16_t mood_trans_frame_(Mood m, int step) {
+    switch (m) {
+      case MOOD_CURIOUS:
+        if (step == 1) return TA_MOOD_CURIOUS_T1;
+        if (step == 2) return TA_MOOD_CURIOUS_T2;
+        if (step == 3) return TA_MOOD_CURIOUS_T3;
+        break;
+      case MOOD_FOCUSED:
+        if (step == 1) return TA_MOOD_FOCUSED_T1;
+        if (step == 2) return TA_MOOD_FOCUSED_T2;
+        if (step == 3) return TA_MOOD_FOCUSED_T3;
+        break;
+      default: break;
+    }
+    return TA_MOOD_NEUTRAL;
+  }
+
+  void push_mood_immediate_() {
+    comp().set_layer(LAYER_MOOD, mood_endpoint_frame_(mood_),
+                     Anchors::MOOD_X, Anchors::MOOD_Y);
+  }
+
+  // Build the through-neutral animation queue for `from → to`.
+  // - Leaving a non-neutral mood: reverse-strip back to neutral (3 in-betweens + neutral).
+  // - Entering a non-neutral mood: forward-strip from neutral (3 in-betweens + endpoint).
+  // - Through a different non-neutral mood: both.
+  void build_mood_anim_(Mood from, Mood to) {
+    mood_anim_count_ = 0;
+    if (from != MOOD_NEUTRAL) {
+      mood_anim_frames_[mood_anim_count_++] = mood_trans_frame_(from, 3);
+      mood_anim_frames_[mood_anim_count_++] = mood_trans_frame_(from, 2);
+      mood_anim_frames_[mood_anim_count_++] = mood_trans_frame_(from, 1);
+      mood_anim_frames_[mood_anim_count_++] = TA_MOOD_NEUTRAL;
+    }
+    if (to != MOOD_NEUTRAL) {
+      mood_anim_frames_[mood_anim_count_++] = mood_trans_frame_(to, 1);
+      mood_anim_frames_[mood_anim_count_++] = mood_trans_frame_(to, 2);
+      mood_anim_frames_[mood_anim_count_++] = mood_trans_frame_(to, 3);
+      mood_anim_frames_[mood_anim_count_++] = mood_endpoint_frame_(to);
+    }
   }
 
   void push_eyes_() {
@@ -171,6 +246,15 @@ class StateMachine {
   bool glyph_visible_ = false;
   int16_t glyph_x_ = 280;
   int16_t glyph_y_ = 30;
+
+  // Mood transition animation queue. Through-neutral routing means the
+  // worst case is leave A (3) + neutral (1) + enter B (3) + endpoint (1)
+  // = 8 frames; pad to 12 for safety.
+  static constexpr uint8_t MAX_MOOD_ANIM = 12;
+  uint16_t mood_anim_frames_[MAX_MOOD_ANIM] = {};
+  uint8_t  mood_anim_count_ = 0;
+  uint8_t  mood_anim_step_ = 0;
+  uint32_t mood_anim_next_us_ = 0;
 };
 
 inline StateMachine& sm() {

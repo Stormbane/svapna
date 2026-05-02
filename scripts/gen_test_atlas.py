@@ -125,12 +125,16 @@ def main() -> None:
         })
 
     # Mood overlays at 48×48 (larger to test variable size).
-    mood_specs = [
-        ("mood_neutral",   (120, 120, 140), "4"),
+    # Each non-neutral mood gets 3 transition frames (t1, t2, t3) that
+    # blend from neutral toward the mood color in 25% steps. The state
+    # machine plays neutral→t1→t2→t3→mood entering, reverse leaving.
+    NEUTRAL_RGB = (120, 120, 140)
+    mood_endpoints = [
+        ("mood_neutral",   NEUTRAL_RGB,     "4"),
         ("mood_curious",   (200, 200, 60),  "5"),
         ("mood_focused",   (60, 200, 200),  "6"),
     ]
-    for name, color, label in mood_specs:
+    for name, color, label in mood_endpoints:
         img = make_solid(name, (48, 48), color, label)
         img.save(OUT_DIR / f"{name}.png")
         frames.append({
@@ -139,6 +143,26 @@ def main() -> None:
             "ox": -24,
             "oy": -24,
         })
+
+    def lerp_rgb(a, b, t):
+        return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
+
+    transition_specs = [
+        ("mood_curious", (200, 200, 60), "5"),
+        ("mood_focused", (60, 200, 200), "6"),
+    ]
+    for base_name, end_color, label in transition_specs:
+        for step, t in enumerate((0.25, 0.5, 0.75), start=1):
+            color = lerp_rgb(NEUTRAL_RGB, end_color, t)
+            tname = f"{base_name}_t{step}"
+            img = make_solid(tname, (48, 48), color, label)
+            img.save(OUT_DIR / f"{tname}.png")
+            frames.append({
+                "name": tname,
+                "file": f"{tname}.png",
+                "ox": -24,
+                "oy": -24,
+            })
 
     # Marginalia glyph 16×16 with magenta corners (transparent test).
     glyph = make_alpha_glyph("glyph_dot")
