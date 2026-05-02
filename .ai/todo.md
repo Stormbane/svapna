@@ -75,11 +75,15 @@ Design: `docs/plans/embodiment-phase2-design-2026-05-02.md`.
       `set_phoneme(int)` snaps the mouth via state machine. Bridge
       side — Piper IPA → phoneme stream → API push — comes when
       we wire the bridge.
-- [ ] **Phoneme→mouth wiring (bridge side).** Piper produces IPA
-      timestamps; need a small mapper to bucket into the 5-shape
-      set, plus the bridge code that pushes `set_speaking` /
-      `set_phoneme` over the API as audio plays. Belongs with the
-      next bridge revision.
+- [x] **Phoneme→mouth wiring (bridge side).** Bridge gets an optional
+      `EmbodimentClient` (one-line CLI: `--embodiment-ip`).
+      `PhonemeMapper` buckets PCM-chunk RMS into 5 phonemes (REST /
+      MBP / EE / OH / AA) — placeholder until we wire real Piper IPA
+      timestamps. The pipeline pushes set_phoneme per chunk during
+      streaming TTS, and a wake/think/settle mood arc at turn
+      transitions. End-to-end demo:
+      `scripts/embodiment_voice_demo.py` plays a fake turn and the
+      device tracks every state change.
 - [x] **Mood transitions.** Through-neutral animation graph: each
       non-neutral mood has 3 in-between frames (`mood_X_t1/t2/t3`),
       played forward entering, reverse leaving. Mood A → B routes
@@ -87,8 +91,11 @@ Design: `docs/plans/embodiment-phase2-design-2026-05-02.md`.
       `set_mood` bypasses the animation for sudden states. 80 ms/step
       = ~320 ms simple, ~640 ms through-neutral. Driven by
       `sm().tick(now_us)` from the display lambda; cheap when idle.
-- [ ] **Eye saliency v1** — bridge sends `eye_target` based on explicit
-      cues (defer learned saliency to Phase 6).
+- [x] **Eye saliency v1** — bridge pushes gaze at explicit
+      turn-state cues: wake → look up (-0.3 y), think → look down
+      (+0.2 y), settle → centered. Firmware-side `set_gaze(gx, gy)`
+      already in. Learned/audio-direction saliency stays deferred to
+      Phase 6.
 
 ### Phase 3 — Sandhi pipeline
 

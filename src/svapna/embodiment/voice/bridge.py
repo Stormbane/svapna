@@ -16,6 +16,7 @@ from aioesphomeapi import APIClient
 
 from .brain import make_brain
 from .config import Config, parse_args
+from .embodiment_client import EmbodimentClient
 from .http_server import TTSServer, local_ip
 from .pipeline import Pipeline
 from .stt import WhisperSTT
@@ -53,6 +54,11 @@ async def run(cfg: Config) -> int:
     client = APIClient(cfg.device_ip, cfg.api_port, password="")
     await client.connect(login=True)
 
+    embodiment: EmbodimentClient | None = None
+    if cfg.embodiment_ip:
+        embodiment = EmbodimentClient(cfg.embodiment_ip, cfg.embodiment_port)
+        await embodiment.connect()  # Failure inside is logged + tolerated.
+
     pipeline = Pipeline(
         client=client,
         stt=stt,
@@ -60,6 +66,7 @@ async def run(cfg: Config) -> int:
         tts=tts,
         tts_server=tts_server,
         streaming_tts=cfg.streaming_tts,
+        embodiment=embodiment,
     )
 
     unsub = client.subscribe_voice_assistant(
@@ -101,6 +108,8 @@ async def run(cfg: Config) -> int:
             await asyncio.wait_for(client.disconnect(), timeout=2.0)
         except Exception as e:
             print(f"  disconnect: {e}", file=sys.stderr)
+        if embodiment is not None:
+            await embodiment.close()
         await tts_server.stop()
     return 0
 

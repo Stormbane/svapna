@@ -34,6 +34,8 @@ class Config:
     brain: str
     conversation_window_s: float
     streaming_tts: bool
+    embodiment_ip: str | None
+    embodiment_port: int
 
 
 def parse_args(argv: list[str] | None = None) -> Config:
@@ -62,6 +64,13 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--streaming-tts", action="store_true",
                    help="Stream TTS sentence-by-sentence via API audio "
                         "(low-latency). Default: full-utterance URL playback.")
+    p.add_argument("--embodiment-ip", default=None,
+                   help="IP of the embodiment device (narada-embodiment.yaml). "
+                        "If unset, the bridge runs without visual presentation. "
+                        "Today this is typically a separate firmware on the "
+                        "same BOX-3, alternated by reflashing.")
+    p.add_argument("--embodiment-port", type=int, default=DEFAULT_API_PORT,
+                   help="API port on the embodiment device. Defaults to 6053.")
     args = p.parse_args(argv)
     return Config(
         device_ip=args.device_ip,
@@ -76,6 +85,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
         brain=args.brain,
         conversation_window_s=args.conversation_window_s,
         streaming_tts=args.streaming_tts,
+        embodiment_ip=args.embodiment_ip,
+        embodiment_port=args.embodiment_port,
     )
 
 

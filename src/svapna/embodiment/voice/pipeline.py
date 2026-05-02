@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Callable
 
 from aioesphomeapi import VoiceAssistantAudioSettings
 
+from .embodiment_client import EmbodimentClient, Mood, Phoneme
+from .phoneme_mapper import PhonemeMapper
 from .protocol import VAEvent, MIC_RATE
 from .tts import clean_for_voice, resample_pcm_to_16k
 from .vad import VadVerdict
@@ -56,6 +58,7 @@ class Pipeline:
         tts_server: TTSServer,
         streaming_tts: bool,
         vad_factory: Callable[[], "SileroVad"] | None = None,
+        embodiment: EmbodimentClient | None = None,
     ):
         self.client = client
         self.stt = stt
@@ -64,6 +67,11 @@ class Pipeline:
         self.tts_server = tts_server
         self.streaming_tts = streaming_tts
         self._vad_factory = vad_factory or _default_vad_factory
+        # Optional presentation channel — None = no embodiment device.
+        # All calls are guarded so a missing/disconnected embodiment
+        # never breaks a turn.
+        self.embodiment = embodiment
+        self._phoneme_mapper = PhonemeMapper()
 
         self._buf: list[bytes] = []
         self._active = False
@@ -91,6 +99,12 @@ class Pipeline:
             print(f"\nwake: {self._wake_phrase!r} (conv={conversation_id})", flush=True)
         else:
             print("\n  phantom turn (no wake_word_phrase) — discarding", flush=True)
+
+        # Embodiment: real wake → look attentive, surface the listening
+        # glyph. Phantom wake → don't visually react (the user did
+        # nothing). Snap mood so attention reads as immediate.
+        if self.embodiment and not self._gated_phantom:
+            asyncio.create_task(self._embody_listen())
 
         await self._event(VAEvent.VOICE_ASSISTANT_RUN_START)
         await self._event(VAEvent.VOICE_ASSISTANT_STT_START)
@@ -154,6 +168,10 @@ class Pipeline:
             return
 
         # Brain
+        # Embodiment: thinking state — focused mood, glance down (the
+        # face we'll commission later will show contemplation here).
+        if self.embodiment:
+            asyncio.create_task(self._embody_think())
         t0 = time.monotonic()
         await self._event(VAEvent.VOICE_ASSISTANT_INTENT_START)
         try:
@@ -183,7 +201,26 @@ class Pipeline:
         """Synthesize one WAV, serve it, send TTS_END {url}."""
         wav_bytes = await self.tts.synthesize(reply)
         url = self.tts_server.write(wav_bytes, ext=".wav")
+        # Embodiment: in URL playback we don't get per-chunk PCM at
+        # the bridge, so we can only flag start/stop. The mouth will
+        # sit in PH_REST while the device plays the URL — the bridge
+        # has no signal to drive phonemes here. Improving this would
+        # mean intercepting media_player playback events from the
+        # device, which is a Phase 3 problem.
+        if self.embodiment:
+            asyncio.create_task(self.embodiment.set_speaking(True))
         await self._event(VAEvent.VOICE_ASSISTANT_TTS_END, {"url": url})
+        if self.embodiment:
+            # Estimate playback duration from WAV length and schedule
+            # speaking=False afterwards. Approximate (WAV header is
+            # 44 bytes, frame = 2 bytes int16 mono).
+            seconds = max(0.5, (len(wav_bytes) - 44) / 2 / 22050)
+            asyncio.create_task(self._embody_speak_off_after(seconds))
+
+    async def _embody_speak_off_after(self, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+        if self.embodiment:
+            await self.embodiment.set_speaking(False)
 
     async def _tts_streaming(self, reply: str) -> None:
         """Synthesize sentence-by-sentence, stream PCM via API audio.
@@ -193,6 +230,10 @@ class Pipeline:
         pipeline takes a uniform format regardless of voice rate.
         """
         await self._event(VAEvent.VOICE_ASSISTANT_TTS_STREAM_START)
+        # Embodiment: speaking on, mouth begins driving from chunks.
+        if self.embodiment:
+            self._phoneme_mapper.reset()
+            asyncio.create_task(self.embodiment.set_speaking(True))
         src_rate = self.tts.sample_rate
         chunk_samples_16k = int(16000 * STREAM_CHUNK_MS / 1000)
         chunk_bytes_16k = chunk_samples_16k * 2
@@ -201,8 +242,14 @@ class Pipeline:
                 resample_pcm_to_16k, sentence_pcm, src_rate
             )
             for i in range(0, len(pcm_16k), chunk_bytes_16k):
-                self.client.send_voice_assistant_audio(pcm_16k[i:i + chunk_bytes_16k])
+                chunk = pcm_16k[i:i + chunk_bytes_16k]
+                self.client.send_voice_assistant_audio(chunk)
+                if self.embodiment:
+                    ph = self._phoneme_mapper.map_chunk(chunk)
+                    asyncio.create_task(self.embodiment.set_phoneme(ph))
                 await asyncio.sleep(STREAM_CHUNK_MS / 1000 * 0.95)
+        if self.embodiment:
+            asyncio.create_task(self.embodiment.set_speaking(False))
         await self._event(VAEvent.VOICE_ASSISTANT_TTS_STREAM_END)
         # TTS_END requires a non-empty URL for state transition. The
         # placeholder is fine here — playback already happened via the
@@ -211,7 +258,40 @@ class Pipeline:
                           {"url": "stream://narada"})
 
     async def _end_run(self) -> None:
+        # Embodiment: settle back to neutral after the turn ends.
+        if self.embodiment:
+            asyncio.create_task(self._embody_settle())
         await self._event(VAEvent.VOICE_ASSISTANT_RUN_END)
+
+    async def _embody_listen(self) -> None:
+        if not self.embodiment:
+            return
+        # Snap to curious so attention is immediate, look slightly up,
+        # show the listening glyph (top-right) as a visible cue that
+        # we're capturing audio.
+        await self.embodiment.set_mood(Mood.CURIOUS, snap=True)
+        await self.embodiment.set_gaze(0.0, -0.3)
+        await self.embodiment.set_glyph(True, 280, 30)
+
+    async def _embody_think(self) -> None:
+        if not self.embodiment:
+            return
+        # STT is done, brain is running. Mood becomes focused (smooth
+        # transition through neutral if currently curious). Gaze drops
+        # slightly — looking inward. Glyph stays visible.
+        await self.embodiment.set_mood(Mood.FOCUSED)
+        await self.embodiment.set_gaze(0.0, 0.2)
+
+    async def _embody_settle(self) -> None:
+        if not self.embodiment:
+            return
+        # Turn over: speaking off (idempotent), mood ease back to
+        # neutral, gaze recenter, glyph off.
+        await self.embodiment.set_speaking(False)
+        await self.embodiment.set_phoneme(Phoneme.REST)
+        await self.embodiment.set_mood(Mood.NEUTRAL)
+        await self.embodiment.set_gaze(0.0, 0.0)
+        await self.embodiment.set_glyph(False)
 
     async def _event(self, event_type: VAEvent,
                      data: dict[str, str] | None = None) -> None:
