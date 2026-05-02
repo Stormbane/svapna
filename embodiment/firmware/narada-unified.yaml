@@ -34,6 +34,9 @@ esphome:
     - include/atlas_test_atlas.h
     - include/compositor.h
     - include/state_machine.h
+    - include/sandhi_test_sandhi.h
+    - include/sandhi_player.h
+    - include/sandhi_catalog.h
   on_boot:
     priority: -100
     then:
@@ -137,6 +140,19 @@ api:
             using namespace narada;
             sm().set_glyph_visible(visible, (int16_t) x, (int16_t) y);
             ESP_LOGI("sm", "glyph=%d at (%d,%d)", (int) visible, x, y);
+    - service: trigger_sandhi
+      variables:
+        id: int   # 0 = test sandhi (color sweep)
+      then:
+        - lambda: |-
+            using namespace narada;
+            const SandhiAsset* a = sandhi_by_id(id);
+            if (a == nullptr) {
+              ESP_LOGW("sandhi", "unknown sandhi id=%d", id);
+              return;
+            }
+            sandhi().start(a, micros());
+            ESP_LOGI("sandhi", "trigger id=%d", id);
 
     # ---- Voice — manual fallback if mWW misbehaves ----
     - service: trigger_listen
@@ -330,8 +346,16 @@ display:
     update_interval: 33ms
     lambda: |-
       uint32_t t0 = micros();
-      narada::sm().tick(t0);
-      narada::comp().render(it);
+      // While a sandhi is playing it owns the framebuffer; suppress
+      // the sprite compositor for the duration. When the sandhi ends
+      // the player calls comp().invalidate_all() so the compositor
+      // repaints from scratch.
+      if (narada::sandhi().active()) {
+        narada::sandhi().render(it, t0);
+      } else {
+        narada::sm().tick(t0);
+        narada::comp().render(it);
+      }
       uint32_t t1 = micros();
       id(lambda_us_total) = id(lambda_us_total) + (uint64_t)(t1 - t0);
       id(frame_count) = id(frame_count) + 1;

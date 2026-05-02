@@ -114,10 +114,26 @@ Design: `docs/plans/embodiment-phase2-design-2026-05-02.md`.
       `narada-voice-test.yaml`, `narada-sprite-test.yaml`, and
       `narada-embodiment.yaml`. They served Phase 1/2; the unified
       firmware supersedes them all.
-- [ ] **Sandhi format** — RLE or PNG-per-frame; target ~1 MB per 60-frame
-      sandhi compressed.
-- [ ] **On-device sandhi player** — load compressed sandhi to PSRAM,
-      decode + blit at target rate. Suppress sprite compositor during play.
+- [x] **Sandhi format.** RLE on RGB565: per-frame stream of
+      `(count: u8, color_be: u16)` runs terminated by `0x00`.
+      Synthetic test sandhi compressed 137× (66 KB for 60 full-screen
+      30 fps frames vs 9 MB uncompressed). Real-art sandhis will
+      compress less but still fit easily under the 8 MB catalog
+      ceiling. Encoder: `scripts/build_sandhi.py`. Test generator:
+      `scripts/gen_test_sandhi.py`. Format spec lives in
+      `docs/plans/embodiment-phase3-sandhi-2026-05-02.md`.
+- [x] **On-device sandhi player.** `include/sandhi_player.h`
+      decodes RLE into a 153 KB PSRAM scratch buffer, then bulk-blits
+      via `display::draw_pixels_at` (RGB565 packed) — bypasses the
+      per-pixel `draw_pixel_at` path that capped Phase 1's sandhi at
+      5 fps. Catalog: `include/sandhi_catalog.h` (one entry today;
+      grows with real art). Display lambda short-circuits the sprite
+      compositor while a sandhi is active, then `comp().invalidate_all()`
+      on stop forces a full repaint. Verified: ~15 fps actual on hw
+      (lambda 22-38 ms + 30 ms full-screen SPI flush at 40 MHz =
+      52-68 ms cycle). 3× the Phase 1 baseline; further gains would
+      come from pushing SPI to 80 MHz or overlapping decode with
+      SPI flush — not worth optimizing until real art is in.
 - [ ] **Streaming sandhi support** — over existing `:6060` TCP for sandhis
       too large for flash or context-built (e.g. dream content from
       recent journal entries).

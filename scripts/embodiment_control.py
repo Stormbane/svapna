@@ -15,6 +15,7 @@ Commands:
     python scripts/embodiment_control.py demo                    # mood + glyph
     python scripts/embodiment_control.py speak                   # phoneme cycle
     python scripts/embodiment_control.py gaze-loop               # eye tracking demo
+    python scripts/embodiment_control.py sandhi [id]             # trigger sandhi (default 0)
 
     # Low-level (direct compositor poke, debug):
     python scripts/embodiment_control.py layer <id> <frame> <x> <y>
@@ -157,6 +158,13 @@ async def main() -> None:
                 await asyncio.sleep(0.08)
             await api.execute_service(svc["set_speaking"], {"speaking": False})
             print("speaking off")
+
+        elif cmd == "sandhi":
+            sid = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+            await api.execute_service(
+                svc["trigger_sandhi"], {"id": sid}
+            )
+            print(f"sandhi -> {sid}")
 
         elif cmd == "gaze-loop":
             # Trace a gentle ellipse with the gaze for 4 s.
