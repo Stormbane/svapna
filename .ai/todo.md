@@ -97,8 +97,23 @@ Design: `docs/plans/embodiment-phase2-design-2026-05-02.md`.
       already in. Learned/audio-direction saliency stays deferred to
       Phase 6.
 
-### Phase 3 — Sandhi pipeline
+### Phase 3 — Unified firmware + sandhi pipeline
 
+- [x] **Unified firmware: `narada-unified.yaml`** — voice + embodiment
+      in ONE firmware, the canonical thing that runs on the BOX-3
+      going forward. Both subsystems coexist with massive headroom
+      (free internal heap 219 KB after boot, well above the 12 KB
+      voice-only firmware reported — the framebuffer goes to PSRAM
+      under our sdkconfig, not internal RAM as the voice firmware
+      comments feared). Verified: boot clean, mWW models load,
+      embodiment services respond identically to standalone embodiment
+      firmware. End-to-end voice round-trip with face animation
+      pending Suti's spoken-wake test.
+- [ ] **Retire dev sandboxes.** Once `narada-unified.yaml` proves
+      stable for one full conversation arc on hw, delete or archive
+      `narada-voice-test.yaml`, `narada-sprite-test.yaml`, and
+      `narada-embodiment.yaml`. They served Phase 1/2; the unified
+      firmware supersedes them all.
 - [ ] **Sandhi format** — RLE or PNG-per-frame; target ~1 MB per 60-frame
       sandhi compressed.
 - [ ] **On-device sandhi player** — load compressed sandhi to PSRAM,
