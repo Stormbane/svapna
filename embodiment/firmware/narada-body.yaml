@@ -1,6 +1,7 @@
 esphome:
   name: narada
   friendly_name: "Narada"
+  min_version: 2026.3.0
   on_boot:
     # Cycle 2.22 — allocate the live-frame-push buffer in PSRAM and
     # spawn the TCP listener task on port 6060. Defaults: mode OFF,
@@ -88,11 +89,28 @@ esphome:
             }
           }, "fb_rx", 4096, nullptr, 1, nullptr);
 
+          // Audio (mic + speaker) is handled by ESPHome's voice_assistant
+          // component now — see the voice_assistant: block below. The earlier
+          // bespoke TCP audio paths on :6061 and :6062 were removed once the
+          // canonical ESPHome flow proved end-to-end on 2026-04-29.
+
+      # mww start is now driven by voice_assistant via the
+      # `micro_wake_word: mww` linkage — VA manages mww lifecycle
+      # automatically. No need for an explicit start action here.
+
 esp32:
-  board: esp32-s3-devkitc-1
-  variant: esp32s3
+  board: esp32s3box
+  flash_size: 16MB
+  cpu_frequency: 240MHz
   framework:
-    type: arduino
+    # esp-idf is required for voice_assistant + micro_wake_word. The earlier
+    # arduino framework lacked the heap headroom for the wake-word tensor
+    # arena ("Failed to allocate tensors" on 2026.3.3 + arduino).
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
 
 # Cycle 2.22 — enable PSRAM so the live-frame-push buffer (153,600 bytes)
 # can sit outside internal SRAM. ESP32-S3-BOX-3 has octal PSRAM @ 80MHz.
@@ -100,7 +118,241 @@ psram:
   mode: octal
   speed: 80MHz
 
+# =====================================================================
+# AUDIO BLOCK — canonical ESPHome BOX-3 voice path (proved 2026-04-29).
+# The whole audio stack (i2c bus, i2s_audio, es7210 ADC, es8311 DAC, mic,
+# speaker, GPIO46 PA enable, voice_assistant, micro_wake_word) is grouped
+# so it can be lifted as a standalone reference firmware. See
+# narada-voice-test.yaml for the standalone form.
+#
+# Hardware: ESP32-S3-BOX-3. Dual mics → ES7210 ADC on I²C bus, fed into
+# I²S0. ES8311 DAC drives a small speaker through a PA chip gated by
+# GPIO46. Pins: BCLK=17, LRCK=45, MCLK=2, mic DIN=16, spk DOUT=15.
+# =====================================================================
+i2s_audio:
+  - id: i2s_audio_bus
+    i2s_lrclk_pin:
+      number: GPIO45
+      ignore_strapping_warning: true
+    i2s_bclk_pin: GPIO17
+    i2s_mclk_pin: GPIO2
+
+audio_adc:
+  - platform: es7210
+    id: es7210_adc
+    bits_per_sample: 16bit
+    mic_gain: 37.5dB
+    sample_rate: 16000
+
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    bits_per_sample: 16bit
+    sample_rate: 48000  # canonical HA Voice-PE rate; mic stays at 16kHz
+
+speaker:
+  - platform: i2s_audio
+    id: box_speaker
+    i2s_dout_pin: GPIO15
+    dac_type: external
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    channel: left
+    audio_dac: es8311_dac
+    # Phase B canonical: 100ms buffer matched to the audio component's
+    # decoder→resampler→I2S writer pipeline. The 2000ms ring was a
+    # workaround for direct PCM streaming through send_voice_assistant_audio
+    # under CPU contention; with media_player URL playback the audio
+    # component manages its own internal PSRAM buffering (much larger
+    # than 100ms) and the speaker ring just feeds the I2S DMA.
+    buffer_duration: 100ms
+
+microphone:
+  - platform: i2s_audio
+    id: box_mic
+    i2s_din_pin: GPIO16
+    adc_type: external
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+# Phase B: media_player wraps box_speaker, providing the proper TTS
+# announcement pipeline (decoder → resampler → mixer → I2S writer).
+# voice_assistant references this media_player rather than the raw
+# speaker, so the bridge can return a URL in TTS_END and the device
+# fetches + decodes + plays through the canonical audio path.
+http_request:
+  id: http_client
+  timeout: 5s
+  watchdog_timeout: 10s
+
+media_player:
+  - platform: speaker
+    id: speaker_media_player
+    name: Narada Speaker
+    volume_min: 0.5
+    volume_max: 0.9
+    announcement_pipeline:
+      speaker: box_speaker
+      format: MP3       # bridge serves edge-tts MP3 directly
+      sample_rate: 48000
+      num_channels: 1   # BOX-3 has a single output channel
+
+# Phase B voice_assistant: references media_player instead of speaker.
+# Mic stays at 16kHz (Whisper's native rate); TTS playback flows
+# through the media_player URL fetcher.
+voice_assistant:
+  id: va
+  microphone: box_mic
+  media_player: speaker_media_player
+  micro_wake_word: mww
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+  on_client_connected:
+    # Canonical HA pattern (wake-word-voice-assistants/esp32-s3-box-3):
+    # set_use_wake_word(false) tells voice_assistant to YIELD wake-word
+    # duty to micro_wake_word and sit passively until mww calls
+    # voice_assistant.start with a wake_word arg. Without this call,
+    # VA owns the streaming wake-word path and mww never gets audio
+    # frames — which is why VERY_VERBOSE produced zero probability
+    # lines in every previous config. Wrapped in start_wake_word so
+    # on_end / on_client_disconnected can re-use the same handoff.
+    - logger.log: "va: client connected — start_wake_word"
+    - script.execute: start_wake_word
+  on_client_disconnected:
+    - logger.log: "va: client disconnected — stop_wake_word"
+    - script.execute: stop_wake_word
+  on_listening:
+    - lambda: |-
+        id(listening_active) = true;
+        id(alien_activity)   = std::string("listening");
+        id(stt_transcript)   = std::string("");
+        id(va_active)        = true;
+    - script.execute: draw_display
+  on_stt_end:
+    - lambda: |-
+        id(stt_transcript) = x;
+  on_intent_start:
+    - lambda: |-
+        id(alien_activity) = std::string("thinking");
+    - script.execute: draw_display
+  on_tts_start:
+    - lambda: |-
+        id(alien_activity)        = std::string("speaking");
+        id(utterance_text)        = x;
+        id(utterance_total_words) = 0;
+        id(utterance_word_index)  = 0;
+        // Rough word count for karaoke timing.
+        int words = 0;
+        bool in_word = false;
+        for (char c : x) {
+          if (c == ' ' || c == '\n' || c == '\t') {
+            in_word = false;
+          } else if (!in_word) {
+            in_word = true;
+            words++;
+          }
+        }
+        id(utterance_total_words) = words;
+    - script.execute: draw_display
+  on_end:
+    # Phase B: wait for the media_player announcement to fully drain
+    # before handing the mic back to mww — otherwise mww hears its
+    # own tail-end audio and can re-trigger immediately. Mirrors the
+    # canonical HA Voice-PE on_end pattern exactly.
+    - wait_until:
+        - and:
+            - not:
+                media_player.is_announcing:
+            - not:
+                speaker.is_playing:
+    - lambda: |-
+        id(listening_active)      = false;
+        id(alien_activity)        = std::string("resting");
+        id(stt_transcript)        = std::string("");
+        id(utterance_text)        = std::string("");
+        id(utterance_total_words) = 0;
+        id(utterance_word_index)  = 0;
+        id(va_active)             = false;
+    - script.execute: draw_display
+    - script.execute: start_wake_word
+  on_error:
+    - lambda: |-
+        ESP_LOGW("va", "error code=%s message=%s",
+                 code.c_str(), message.c_str());
+        id(listening_active) = false;
+        id(alien_activity)   = std::string("resting");
+        id(va_active)        = false;
+    - script.execute: draw_display
+    - script.execute: start_wake_word
+
+# Phase A scripts: wake-word handoff lifted from canonical HA Voice-PE.
+# The pivotal call is set_use_wake_word(false): without it, VA owns
+# the streaming wake-word path and starves mww of audio frames.
+#
+# Phase B+ script: draw_display fires once per state transition. The
+# display has update_interval: never; this script + the idle interval
+# are the only callers of component.update.
+script:
+  - id: start_wake_word
+    then:
+      - if:
+          condition:
+            not:
+              voice_assistant.is_running:
+          then:
+            - lambda: id(va).set_use_wake_word(false);
+            - micro_wake_word.start:
+            - logger.log: "mww: started (use_wake_word=false)"
+  - id: stop_wake_word
+    then:
+      - micro_wake_word.stop:
+      - voice_assistant.stop:
+      - logger.log: "mww: stopped"
+  - id: draw_display
+    then:
+      - component.update: narada_display
+
+# Idle scene animator (see also the `interval:` block further down for
+# the signal-decay tick). Both entries belong to the same top-level
+# `interval:` key, so the idle animator lives inside that block.
+
+# On-device wake word. Pinned to the V1 model URL because ESPHome
+# 2026.3.x has a known regression on ESP32-S3-BOX-3 where the new
+# audio stack fragments PSRAM, leaving no contiguous block for the V2
+# tensor arena. V2 models silently fail to allocate; V1 still works.
+# Bare `model: hey_jarvis` resolves to V2 and breaks here.
+# See https://github.com/esphome/esphome/issues/15603
+micro_wake_word:
+  id: mww
+  microphone: box_mic
+  on_wake_word_detected:
+    - logger.log:
+        format: "wake word detected: %s"
+        args: ['wake_word.c_str()']
+    # Pass the detected wake_word phrase through to voice_assistant
+    # (matches the canonical HA-Voice-PE pattern). This is what makes
+    # voice_pipeline.py's handle_start receive wake_word_phrase="Hey Jarvis"
+    # instead of None — confirms the call came from real wake-word
+    # detection rather than a phantom auto-start.
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+  vad:
+  models:
+    - model: github://esphome/micro-wake-word-models/models/hey_jarvis.json@main
+      id: hey_jarvis_v1
+      # Lower cutoff for diagnosis: with 0.5 default, only high-confidence
+      # detections fire. 0.3 lets us see whether mww IS scoring our voice
+      # but just below threshold. Combined with VERY_VERBOSE logs, this
+      # turn's data should be conclusive.
+      probability_cutoff: 0.3
+
 logger:
+  # INFO is the steady state. Bumped temporarily to VERY_VERBOSE
+  # diagnostic earlier — captured 30s of audio at the right level
+  # and confirmed micro_wake_word emits zero probability lines on
+  # this hardware/version, regardless of config. Pivoted to
+  # software wake word in the bridge (see voice_pipeline.py).
   level: INFO
 
 wifi:
@@ -357,6 +609,21 @@ api:
             id(alien_speech) = phrase;
             ESP_LOGI("alien", "speech (%u chars)", (unsigned)phrase.length());
 
+    # --- Cycle 4.1 — voice control ---
+    - service: clear_listening
+      then:
+        - lambda: |-
+            id(listening_active) = false;
+            id(stt_transcript) = "";
+            ESP_LOGI("voice", "listening cleared by desktop bridge");
+
+    - service: set_stt_transcript
+      variables:
+        phrase: string
+      then:
+        - lambda: |-
+            id(stt_transcript) = phrase;
+
 time:
   - platform: sntp
     id: sntp_time
@@ -366,6 +633,18 @@ time:
 # the clear itself. Persistent signals (duration_ms == 0 → signal_until_ms == 0)
 # are skipped; only `clear_signal` clears those.
 interval:
+  # Phase B+ idle scene animator. Drives the alien rig + sky + clouds
+  # at 500ms only when va_active is false. During voice turns this is
+  # a no-op so the SPI bus and CPU are free for clean I2S audio. The
+  # va lifecycle hooks call draw_display directly to push the static
+  # phase glyph once per transition.
+  - interval: 500ms
+    then:
+      - if:
+          condition:
+            lambda: return !id(va_active);
+          then:
+            - component.update: narada_display
   - interval: 250ms
     then:
       - lambda: |-
@@ -408,6 +687,29 @@ globals:
     type: std::string
     initial_value: '"neutral"'
   - id: alien_speech
+    type: std::string
+    initial_value: '""'
+
+  # --- Voice activity flag — set true while voice_assistant is in any
+  # active state (listening / thinking / speaking). The display lambda
+  # early-returns when this is true, freezing the scene on the last
+  # rendered frame. Visuals hold for the duration of a turn so all
+  # the SPI bandwidth + CPU goes to clean audio I/O. The frozen frame
+  # is fine UX: voice is the active modality during a turn anyway.
+  - id: va_active
+    type: bool
+    initial_value: 'false'
+
+  # --- Cycle 4.1 — voice/listen state ---
+  # Set true by the touchscreen handler when Narada should start
+  # capturing audio. Cleared by the desktop bridge via clear_listening
+  # when the capture window ends (server-side VAD endpoint detection).
+  - id: listening_active
+    type: bool
+    initial_value: 'false'
+  # Partial STT transcript pushed by the desktop bridge as words land.
+  # Rendered as a scrolling band above Narada's head while listening.
+  - id: stt_transcript
     type: std::string
     initial_value: '""'
 
@@ -505,10 +807,60 @@ spi:
   clk_pin: 7
   mosi_pin: 6
 
+# Cycle 4.1 — touchscreen for Narada's input gesture.
+# ESP32-S3-BOX-3 wires the GT911 capacitive touch controller on I2C
+# pins SDA=8, SCL=18 with INT on GPIO3. The reset line is shared with
+# the display reset on GPIO48, which the display already handles.
+i2c:
+  sda: 8
+  scl: 18
+  scan: false   # don't probe — display reset shares the rst line
+
+touchscreen:
+  - platform: gt911
+    id: narada_touch
+    interrupt_pin:
+      number: GPIO3
+      ignore_strapping_warning: true
+    display: narada_display
+    on_touch:
+      # Touch on landscape    → sandhi into the UFO cabin.
+      # Touch on ufo_interior → start the voice_assistant (push-to-talk).
+      # The voice_assistant on_listening hook flips alien_activity and
+      # listening_active; we don't have to set them here.
+      - if:
+          condition:
+            lambda: 'return id(bhumi_current) == std::string("landscape");'
+          then:
+            - lambda: |-
+                id(bhumi_current) = "ufo_interior";
+                ESP_LOGI("touch", "sandhi: landscape -> ufo_interior");
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(bhumi_current) == std::string("ufo_interior");'
+                then:
+                  - logger.log: "touch — voice_assistant.start"
+                  - voice_assistant.start:
+
 output:
   - platform: ledc
     pin: GPIO47
     id: backlight_output
+
+# Speaker PA enable on GPIO46. Without this the DAC clocks audio fine
+# but the amp feeding the physical speaker stays off, so the box is
+# silent. RESTORE_DEFAULT_ON keeps it enabled across boots — the small
+# idle hum is tolerable in exchange for not having to gate it manually.
+switch:
+  - platform: gpio
+    name: Speaker Enable
+    id: speaker_enable
+    pin:
+      number: GPIO46
+      ignore_strapping_warning: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
 
 light:
   - platform: monochromatic
@@ -527,8 +879,47 @@ display:
       number: 48
       inverted: true
     invert_colors: false
-    update_interval: 100ms
+    # Event-driven rendering (Phase B+, mirrors HA's canonical config):
+    # the display does not poll. A separate `interval:` block ticks the
+    # idle scene animator at 500ms — and that block is itself gated on
+    # `!va_active`, so during voice turns the display redraws ONLY when
+    # the va lifecycle hooks explicitly fire `draw_display`. Eliminates
+    # the per-frame contention with the I2S audio path that was causing
+    # crackles even with the va_active early-return.
+    update_interval: never
     lambda: |-
+      // ===================================================================
+      // VOICE-ACTIVE STATIC FRAME — Phase B+ event-driven rendering.
+      // Display redraws ONLY when va lifecycle fires draw_display script;
+      // no millis() animation, no triangle-wave pulse. Each phase is a
+      // single static glyph (one fill + one filled_circle), pushed once
+      // per state transition. SPI bus + CPU sit idle the rest of the
+      // turn, freeing bandwidth for clean I2S audio.
+      //
+      // Phase glyph:
+      // - listening: bright cyan disc, large radius — "open ear"
+      // - thinking:  soft violet disc, mid radius   — "considering"
+      // - speaking:  warm amber disc, large radius  — "voicing"
+      // ===================================================================
+      if (id(va_active)) {
+        it.fill(Color(0x08, 0x0C, 0x18));   // very dark navy
+        Color pulse_col;
+        int radius;
+        std::string act = id(alien_activity);
+        if (act == std::string("listening")) {
+          pulse_col = Color(0x60, 0xC0, 0xF0);   // cyan-blue
+          radius    = 24;
+        } else if (act == std::string("thinking")) {
+          pulse_col = Color(0xC0, 0x90, 0xE0);   // soft violet
+          radius    = 18;
+        } else {                                  // speaking or unknown
+          pulse_col = Color(0xF0, 0xC0, 0x60);   // warm amber
+          radius    = 24;
+        }
+        it.filled_circle(160, 120, radius, pulse_col);
+        return;
+      }
+
       // ===================================================================
       // CYCLE 2.22 — live frame push override. When remote_frame_active is
       // true and the framebuffer is allocated, blit it directly and skip
@@ -579,52 +970,61 @@ display:
         else                                             { psr=0x08; psg=0x0E; psb=0x18; }
         Color porthole_sky(psr, psg, psb);
 
-        // Cockpit walls.
-        it.fill(Color(0x15, 0x18, 0x20));
+        // ----- Cockpit cabin: large windows on top, floor on bottom -----
+        // Sky fills the upper band as a single backdrop; vertical mullions
+        // overlay it to break the view into three panes (left alien, middle
+        // bubble, right). Below the floor line the cabin floor is opaque.
+        const int floor_y      = 168;     // pixel y where floor begins
+        const int top_frame_h  = 10;      // top cabin frame strip
+        const int sill_h       = 4;       // sill at the floor line
+        const int mull1_col    = 14;      // mullion between left & middle pane
+        const int mull2_col    = 30;      // mullion between middle & right pane
+        const int mull_w_px    = 12;      // mullion thickness in px
+        Color floor_col(0x4A, 0x4E, 0x58);
+        Color frame_col(0x90, 0x96, 0xA0);
 
-        // Porthole — small window in upper-right (cycle 3.2: alien gets
-        // the majority of the screen).
-        const int px = 268, py = 38, pr = 32;
-        it.filled_circle(px, py, pr, porthole_sky);
-        Color rim(0x60, 0x65, 0x70);
-        it.circle(px, py, pr, rim);
-        it.circle(px, py, pr + 1, rim);
-
-        // Stars through the porthole — generate a small set seeded by
-        // a constant. (The landscape star arrays are local to that
-        // branch so we re-derive a few here.)
+        // 1. Sky — fills full width behind everything, clipped by mullions.
+        it.filled_rectangle(0, top_frame_h, 320, floor_y - top_frame_h,
+                            porthole_sky);
+        // 2. Floor — opaque grey from floor_y down.
+        it.filled_rectangle(0, floor_y, 320, 240 - floor_y, floor_col);
+        // 3. Stars in the sky band (night, clear sky).
         if (!ufo_is_day && ufo_cloud < 50.0f) {
           uint32_t seed = 0xa11ce5u;
-          for (int i = 0; i < 8; i++) {
+          for (int i = 0; i < 14; i++) {
             seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
             int scol = (int)(seed % 44u);
             seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
-            int srow = (int)(seed % 7u);
+            int srow = (int)(seed % 9u);
             seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
             float ph = (float)(seed % 1000u) / 1000.0f * 6.2831853f;
             int sxp = scol * 7 + 3;
-            int syp = srow * 14 + 7;
-            int dx = sxp - px, dy = syp - py;
-            if (dx * dx + dy * dy > (pr - 6) * (pr - 6)) continue;
+            int syp = top_frame_h + 6 + srow * 14;
+            if (syp > floor_y - 8) continue;
             float b = (sinf((float)bhumi_now_ms / 700.0f + ph) + 1.0f) * 0.5f;
             if (b > 0.65f) {
               it.print(sxp, syp, id(plex_mono_12),
-                       Color(0xD4, 0xCC, 0xB8), TextAlign::CENTER, "*");
+                       Color(0xE8, 0xE0, 0xC4), TextAlign::CENTER, "*");
             }
           }
         }
+        // 4. Sun (day) — drifts left→right across the sky band.
         if (ufo_is_day) {
           float t_day_u = (ufo_hour - 6.0f) / 12.0f;
-          int sun_col = (int)(t_day_u * 43.0f);
-          int sun_row = (int)roundf(6.0f - sinf(3.14159f * t_day_u) * 6.0f);
-          if (sun_row < 1) sun_row = 1;
-          int sxp = sun_col * 7 + 3;
-          int syp = sun_row * 14 + 7;
-          int dx = sxp - px, dy = syp - py;
-          if (dx * dx + dy * dy < (pr - 8) * (pr - 8)) {
-            it.filled_circle(sxp, syp, 6, Color(0xF4, 0xD0, 0x60));
+          int sxp = (int)(t_day_u * 320.0f);
+          int syp = (int)(top_frame_h + 16
+                          + (1.0f - sinf(3.14159f * t_day_u)) * 28.0f);
+          if (syp > top_frame_h + 4 && syp < floor_y - 8) {
+            it.filled_circle(sxp, syp, 7, Color(0xF8, 0xD8, 0x70));
           }
         }
+        // 5. Frames overlay — top frame, sill, two vertical mullions.
+        it.filled_rectangle(0, 0, 320, top_frame_h, frame_col);
+        it.filled_rectangle(0, floor_y - sill_h, 320, sill_h, frame_col);
+        it.filled_rectangle(mull1_col * 7, top_frame_h,
+                            mull_w_px, floor_y - top_frame_h, frame_col);
+        it.filled_rectangle(mull2_col * 7, top_frame_h,
+                            mull_w_px, floor_y - top_frame_h, frame_col);
 
         // ----- Mood tint for accents -----
         float v = (id(mood_valence) + 1.0f) * 0.5f;
@@ -645,13 +1045,15 @@ display:
         );
 
         // ----- Alien rig: resolve layer glyphs for current activity -----
-        Color skin(0x90, 0xA8, 0x70);
-        Color eyes_col(0xE0, 0xE4, 0xEA);
+        // Bright cream so the alien pops against the blue sky behind the
+        // cabin windows.
+        Color skin(0xF0, 0xE8, 0xD0);
+        Color eyes_col(0xF8, 0xF8, 0xE8);
         const std::string& act = id(alien_activity);
         const std::string& mood = id(alien_mood);
 
         // Defaults (matches "resting" preset).
-        const char* antennae = "..---..";
+        const char* antennae = "..-=-..";
         const char* brow     = "_ _";
         const char* eyes_g   = "O O";
         const char* mouth    = "\\_/";
@@ -659,12 +1061,19 @@ display:
         const char* ear_r    = "";
         const char* legs     = "/     \\";
         bool draw_side_O     = true;
-        const char* sh_str   = "/|     |\\";   // shoulders
-        const char* hd_str   = "O |_____| O";  // hands
+        // Shoulders + hands carry Narada's sacred thread (yajnopavita)
+        // crossing diagonally `/` from right shoulder down across torso.
+        const char* sh_str   = "/|   / |\\";   // shoulders + thread
+        const char* hd_str   = "O |__/__| O";  // hands + thread crossing
 
-        // Walking translation
-        int alien_col = 14;
-        int alien_row = 1;
+        // alien_row=5 puts the legs row (rig row 11) at y=224 with the
+        // glyph extending to y=238 — feet flush with screen bottom.
+        // alien_col=6 when a speech bubble is up so the bubble can occupy
+        // the right ~20 cols without overlapping the face; otherwise 14.
+        bool has_speech = (act == std::string("speaking") && !id(alien_speech).empty());
+        // alien_col=0 → silhouette's leftmost glyph at screen col 1 (1-char pad).
+        int alien_col = has_speech ? 0 : 14;
+        int alien_row = 5;
         if (act == std::string("walking_right") || act == std::string("walking_left")) {
           float cycle_t = (float)(bhumi_now_ms % 24000UL) / 24000.0f;
           int offset = (int)(cycle_t * 20.0f - 10.0f);
@@ -739,10 +1148,44 @@ display:
           }
         }
 
+        // ----- Idle animation: breathing + resting-pace -----
+        // Breath is a 4s vertical bob (±1-2 px) for every non-walking,
+        // non-speech-bubble state — keeps Narada alive even when still.
+        // Resting also drifts left/right ±5 cols on a 30s cycle, so he
+        // paces slowly back and forth across the cabin floor.
+        int breath_dy = 0;
+        if (act != std::string("walking_left") &&
+            act != std::string("walking_right") &&
+            !has_speech) {
+          float br = sinf((float)bhumi_now_ms / 4000.0f * 6.2831853f);
+          breath_dy = (int)(br * 1.8f);
+        }
+        if (act == std::string("resting")) {
+          float pt = (float)(bhumi_now_ms % 30000UL) / 30000.0f;
+          alien_col += (int)(sinf(pt * 6.2831853f) * 5.0f);
+        }
+
         // ----- Render alien row by row -----
         const int CW = 7, CH = 14;
         int ax = alien_col * CW;
-        int ay = alien_row * CH;
+        int ay = alien_row * CH + breath_dy;
+
+        // Body fills — per-region rectangles that hug the inside of the
+        // ASCII silhouette, so the glyph walls remain visible against the
+        // cabin sky. Three head shapes (top wedge, main, chin wedge),
+        // chest (kurta), dhoti.
+        Color skin_fill(0x4A, 0x30, 0x28);   // warm head tone
+        Color kurta_fill(0x88, 0x3A, 0x18);  // saffron chest
+        Color dhoti_fill(0x6A, 0x4A, 0x28);  // ochre dhoti
+        // Head — top wedge (row 1, cols 3..9), main (rows 2..4, cols 2..10),
+        // chin wedge (row 5, cols 3..9).
+        it.filled_rectangle(ax + 3 * CW, ay + 1 * CH, 7 * CW, 1 * CH, skin_fill);
+        it.filled_rectangle(ax + 2 * CW, ay + 2 * CH, 9 * CW, 3 * CH, skin_fill);
+        it.filled_rectangle(ax + 3 * CW, ay + 5 * CH, 7 * CW, 1 * CH, skin_fill);
+        // Chest (rows 6..8) — inside torso walls at cols 3 and 9.
+        it.filled_rectangle(ax + 4 * CW, ay + 6 * CH, 5 * CW, 3 * CH, kurta_fill);
+        // Dhoti (rows 9..10) — same width.
+        it.filled_rectangle(ax + 4 * CW, ay + 9 * CH, 5 * CW, 2 * CH, dhoti_fill);
 
         // Row 0: antennae (e.g. "..---..")
         {
@@ -766,7 +1209,9 @@ display:
           }
           it.print(ax, ay + 2 * CH, id(plex_mono_12), eyes_col, buf);
         }
-        // Row 3: ears + nose
+        // Row 3: ears + nose. `C` and `D` are the ears (replacing the
+        // wall pipes on this row); `u` is the nose. Ear pulse decorations
+        // spill outside this envelope.
         it.print(ax, ay + 3 * CH, id(plex_mono_12), skin, " C    u    D");
         if (ear_l && ear_l[0]) {
           int dx_chars = (int)strlen(ear_l);
@@ -777,13 +1222,15 @@ display:
           it.print(ax + 13 * CW + CW, ay + 3 * CH, id(plex_mono_12),
                    accent, ear_r);
         }
-        // Row 4: mouth (3- or 5-char)
+        // Row 4: mouth (3- or 5-char). 3-char mouths get cheeks `)` `(`
+        // flanking the mouth — Narada's full-cheeked face. 5-char visemes
+        // (talking-wide) skip cheeks since they fill the inner space.
         {
           char buf[24];
           if (strlen(mouth) == 5) {
             snprintf(buf, sizeof(buf), " |  %s  |", mouth);
           } else {
-            snprintf(buf, sizeof(buf), " |   %s   |", mouth);
+            snprintf(buf, sizeof(buf), " | ) %s ( |", mouth);
           }
           it.print(ax, ay + 4 * CH, id(plex_mono_12),
                    (act == std::string("speaking")) ? accent : skin, buf);
@@ -796,7 +1243,8 @@ display:
           it.print(ax, ay + 8 * CH, id(plex_mono_12), skin, "   |_____|");
         } else {
           it.print(ax, ay + 5 * CH, id(plex_mono_12), skin, "  \\_______/");
-          it.print(ax, ay + 6 * CH, id(plex_mono_12), skin, "   |     |");
+          // Neck row carries the top of the sacred thread `/`.
+          it.print(ax, ay + 6 * CH, id(plex_mono_12), skin, "   |    /|");
           // Row 7: shoulders
           {
             char buf[24];
@@ -812,10 +1260,10 @@ display:
             it.print(ax, ay + 8 * CH, id(plex_mono_12), skin, buf);
           }
         }
-        // Row 9: waist
-        it.print(ax, ay + 9 * CH, id(plex_mono_12), skin, "   |     |");
-        // Row 10: lower body
-        it.print(ax, ay + 10 * CH, id(plex_mono_12), skin, "   |_____|");
+        // Row 9: waist — dhoti drape `\` starts here.
+        it.print(ax, ay + 9 * CH, id(plex_mono_12), skin, "   |  \\  |");
+        // Row 10: lower body — dhoti continues into the belt.
+        it.print(ax, ay + 10 * CH, id(plex_mono_12), skin, "   |___\\_|");
         // Row 11: legs
         {
           char buf[24];
@@ -843,34 +1291,186 @@ display:
           it.print(ax + 14 * CW, ay - CH, id(plex_mono_12), accent, "!");
         }
 
-        // ----- Speech bubble (cycle 3.2: expanding + scrolling text) -----
-        if (act == std::string("speaking") && !id(alien_speech).empty()) {
-          const std::string& speech = id(alien_speech);
-          // Bubble fills the upper-right strip: cols 0-44, rows 0-3.
-          int bx = 8, by = 4;
-          int bw = 320 - 16;   // full width minus margin
-          int bh = 3 * CH + 4;
-          // Bubble background (light grey)
-          it.filled_rectangle(bx, by, bw, bh, Color(0xE0, 0xE4, 0xEA));
-          it.rectangle(bx, by, bw, bh, Color(0x80, 0x88, 0x95));
-          // Tail pointing back to mouth.
-          int mouth_x = ax + 6 * CW;
-          int mouth_y = ay + 4 * CH + CH;
-          it.line(bx + 24, by + bh, mouth_x, mouth_y, Color(0x80, 0x88, 0x95));
-          // Text — wrap and scroll if too long.
-          int chars_per_line = (bw - 16) / CW;
-          int total_chars = (int)speech.length();
-          int visible_per_line = chars_per_line;
-          int max_visible = visible_per_line;   // single line for now
-          int scroll_offset = 0;
-          if (total_chars > max_visible) {
-            scroll_offset = (int)((bhumi_now_ms / 100UL) % (uint32_t)(total_chars - max_visible + 1));
+        // ----- Live STT transcript — scrolling band above Narada -----
+        // While listening, the desktop bridge pushes partial transcripts
+        // via set_stt_transcript. We show the most recent N chars with
+        // a leading "..." when it overflows, so the latest words are
+        // always visible at the right edge.
+        if (!id(stt_transcript).empty()) {
+          const std::string& transcript = id(stt_transcript);
+          // 16px Plex Mono advance ~10px → 30 chars per row × 2 rows.
+          // Only scroll (with leading "...") when text exceeds the panel.
+          const int per_row = 30;
+          const int max_total = per_row * 2;
+          const int CW_16 = 10;
+          std::string visible;
+          if ((int)transcript.length() <= max_total) {
+            visible = transcript;
+          } else {
+            visible = "..." + transcript.substr(transcript.length()
+                                                 - (max_total - 3));
           }
-          int end = scroll_offset + max_visible;
-          if (end > total_chars) end = total_chars;
-          std::string visible = speech.substr(scroll_offset, end - scroll_offset);
-          it.print(bx + 8, by + 4, id(plex_mono_12),
-                   Color(0x20, 0x24, 0x2C), visible.c_str());
+          // 1-row mode when text fits on a single row; 2-row otherwise.
+          bool two_rows = (int)visible.length() > per_row;
+          std::string row1, row2;
+          if (two_rows) {
+            row1 = visible.substr(0, per_row);
+            row2 = visible.substr(per_row);
+          } else {
+            row1 = visible;
+          }
+          // Last word starts at last space + 1 (or 0 if no space).
+          size_t last_space = visible.rfind(' ');
+          int last_word_start = (last_space == std::string::npos)
+                                  ? 0 : (int)last_space + 1;
+
+          // White panel — height varies with row count.
+          Color bg(0xF8, 0xF8, 0xF0);
+          Color text_black(0x18, 0x18, 0x18);
+          Color text_red(0xC8, 0x18, 0x18);
+          int bg_h = two_rows ? 40 : 20;
+          it.filled_rectangle(0, 12, 320, bg_h, bg);
+
+          // Per-row painter: split into pre-last-word (black) + last word (red).
+          auto paint_row = [&](int y_px, int row_offset_in_visible,
+                                const std::string& row) {
+            int split = last_word_start - row_offset_in_visible;
+            if (split >= (int)row.length()) {
+              it.print(8, y_px, id(plex_mono_16), text_black, row.c_str());
+            } else if (split <= 0) {
+              it.print(8, y_px, id(plex_mono_16), text_red, row.c_str());
+            } else {
+              std::string blk = row.substr(0, split);
+              std::string rd = row.substr(split);
+              it.print(8, y_px, id(plex_mono_16), text_black, blk.c_str());
+              it.print(8 + (int)blk.length() * CW_16, y_px,
+                       id(plex_mono_16), text_red, rd.c_str());
+            }
+          };
+          paint_row(12, 0, row1);
+          if (two_rows && !row2.empty()) {
+            paint_row(32, per_row, row2);
+          }
+        }
+
+        // ----- Speech bubble — ASCII art frame, right side of screen -----
+        // Drawn entirely with glyphs (no filled rectangles or lines), to
+        // match the all-character aesthetic of the alien itself. Tail
+        // (`<` and `\`) extrudes left toward the alien's mouth. Multi-line
+        // word wrap with vertical line scroll at 1 line / 2s on overflow.
+        if (has_speech) {
+          const std::string& speech = id(alien_speech);
+          const int W = 28;            // outer bubble width in chars
+          const int H = 11;            // outer bubble height in rows
+          const int bcol = 16;         // bubble left col (where `/` sits)
+          const int brow = 5;          // bubble top row (top edge underscores)
+          Color frame(0xF8, 0xF8, 0xF0);
+          Color text_color(0x28, 0x18, 0x10);
+          // Aged-parchment interior — warmer / yellower than cream.
+          Color bubble_fill(0xE8, 0xD4, 0xA8);
+
+          // Centered fill inside the ASCII frame: inset 1 char + 2px on
+          // each side so the `/`, `\`, `|`, `_` frame chars draw cleanly.
+          int fill_x = (bcol + 1) * CW + 2;
+          int fill_y = (brow + 1) * CH + 2;
+          int fill_w = (W - 2) * CW - 4;
+          int fill_h = (H - 2) * CH - 4;
+          it.filled_rectangle(fill_x, fill_y, fill_w, fill_h, bubble_fill);
+
+          // Buffers for the frame rows (W chars each, plus null term).
+          char top_edge[40], top_corner[40], side[40], bot[40];
+          // Top edge: " " + (W-2)*"_" + " "
+          top_edge[0] = ' ';
+          for (int i = 1; i < W - 1; i++) top_edge[i] = '_';
+          top_edge[W - 1] = ' '; top_edge[W] = '\0';
+          // Top corners: "/" + (W-2)*" " + "\\"
+          top_corner[0] = '/';
+          for (int i = 1; i < W - 1; i++) top_corner[i] = ' ';
+          top_corner[W - 1] = '\\'; top_corner[W] = '\0';
+          // Side: "|" + (W-2)*" " + "|"
+          side[0] = '|';
+          for (int i = 1; i < W - 1; i++) side[i] = ' ';
+          side[W - 1] = '|'; side[W] = '\0';
+          // Bottom: "\\" + (W-2)*"_" + "/"
+          bot[0] = '\\';
+          for (int i = 1; i < W - 1; i++) bot[i] = '_';
+          bot[W - 1] = '/'; bot[W] = '\0';
+
+          int bx_px = bcol * CW;
+          int by_px = brow * CH;
+          // Frame rows.
+          it.print(bx_px, by_px,                id(plex_mono_12), frame, top_edge);
+          it.print(bx_px, by_px + 1 * CH,       id(plex_mono_12), frame, top_corner);
+          // Tail rows: row 2 has `<` at col bcol-2, no left wall;
+          // row 3 has `\` at col bcol-1, no left wall. Right wall stays.
+          char tail_row[40];
+          for (int i = 0; i < W; i++) tail_row[i] = ' ';
+          tail_row[W - 1] = '|'; tail_row[W] = '\0';
+          // Row 2 (tail mid).
+          it.print(bx_px - 2 * CW, by_px + 2 * CH, id(plex_mono_12), frame, "<");
+          it.print(bx_px,          by_px + 2 * CH, id(plex_mono_12), frame, tail_row);
+          // Row 3 (tail bot).
+          it.print(bx_px - 1 * CW, by_px + 3 * CH, id(plex_mono_12), frame, "\\");
+          it.print(bx_px,          by_px + 3 * CH, id(plex_mono_12), frame, tail_row);
+          // Body rows.
+          for (int r = 4; r < H - 1; r++) {
+            it.print(bx_px, by_px + r * CH, id(plex_mono_12), frame, side);
+          }
+          // Bottom.
+          it.print(bx_px, by_px + (H - 1) * CH, id(plex_mono_12), frame, bot);
+
+          // ----- Text — wrap into lines, scroll if overflow -----
+          // Text starts 2 chars in from left wall, ends 1 char before right wall.
+          int text_col = bcol + 2;
+          int chars_per_line = W - 4;
+          if (chars_per_line < 4) chars_per_line = 4;
+          // Text rows: bubble rows 2..H-2 (skip top edge/corner and bottom).
+          int text_top_row = brow + 2;
+          int max_lines = (H - 1) - 2;   // rows 2..H-2 inclusive
+          // Word-wrap.
+          std::vector<std::string> lines;
+          {
+            std::string cur, word;
+            for (size_t i = 0; i <= speech.size(); i++) {
+              char c = (i < speech.size()) ? speech[i] : ' ';
+              if (c == ' ' || c == '\n') {
+                if (!word.empty()) {
+                  if ((int)(cur.size() + (cur.empty() ? 0 : 1) + word.size())
+                        <= chars_per_line) {
+                    if (!cur.empty()) cur += ' ';
+                    cur += word;
+                  } else {
+                    if (!cur.empty()) lines.push_back(cur);
+                    if ((int)word.size() <= chars_per_line) {
+                      cur = word;
+                    } else {
+                      for (size_t j = 0; j < word.size(); j += chars_per_line) {
+                        lines.push_back(word.substr(j, chars_per_line));
+                      }
+                      cur.clear();
+                    }
+                  }
+                  word.clear();
+                }
+                if (c == '\n') {
+                  if (!cur.empty()) lines.push_back(cur);
+                  cur.clear();
+                }
+              } else {
+                word += c;
+              }
+            }
+            if (!cur.empty()) lines.push_back(cur);
+          }
+          int scroll = 0;
+          if ((int)lines.size() > max_lines) {
+            scroll = (int)((bhumi_now_ms / 2000UL)
+                           % (uint32_t)(lines.size() - max_lines + 1));
+          }
+          for (int i = 0; i < max_lines && (scroll + i) < (int)lines.size(); i++) {
+            it.print(text_col * CW, (text_top_row + i) * CH,
+                     id(plex_mono_12), text_color, lines[scroll + i].c_str());
+          }
         }
         return;
       }
@@ -1838,14 +2438,14 @@ text_sensor:
   - platform: template
     name: "Current Status"
     id: current_status_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       return id(heartbeat_status_str);
 
   - platform: template
     name: "Current Thought"
     id: current_thought_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       return id(current_thought_str);
 
@@ -1856,7 +2456,7 @@ text_sensor:
   - platform: template
     name: "Mood Valence"
     id: mood_valence_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       char buf[16];
       snprintf(buf, sizeof(buf), "%.3f", id(mood_valence));
@@ -1865,7 +2465,7 @@ text_sensor:
   - platform: template
     name: "Mood Arousal"
     id: mood_arousal_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       char buf[16];
       snprintf(buf, sizeof(buf), "%.3f", id(mood_arousal));
@@ -1874,7 +2474,7 @@ text_sensor:
   - platform: template
     name: "Vitality Sleep Pressure"
     id: vitality_sleep_pressure_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       char buf[16];
       snprintf(buf, sizeof(buf), "%.3f", id(vitality_sleep_pressure));
@@ -1883,7 +2483,7 @@ text_sensor:
   - platform: template
     name: "Vitality Restlessness"
     id: vitality_restlessness_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       char buf[16];
       snprintf(buf, sizeof(buf), "%.3f", id(vitality_restlessness));
@@ -1892,7 +2492,7 @@ text_sensor:
   - platform: template
     name: "Vitality Warmth"
     id: vitality_warmth_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       char buf[16];
       snprintf(buf, sizeof(buf), "%.3f", id(vitality_warmth));
@@ -1901,21 +2501,21 @@ text_sensor:
   - platform: template
     name: "Attention Mode"
     id: attention_mode_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       return id(attention_mode);
 
   - platform: template
     name: "Attention Target"
     id: attention_target_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       return id(attention_target);
 
   - platform: template
     name: "Attention Intensity"
     id: attention_intensity_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       char buf[16];
       snprintf(buf, sizeof(buf), "%.3f", id(attention_intensity));
@@ -1924,21 +2524,21 @@ text_sensor:
   - platform: template
     name: "Activity Mode"
     id: activity_mode_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       return id(activity_mode);
 
   - platform: template
     name: "Utterance Text"
     id: utterance_text_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       return id(utterance_text);
 
   - platform: template
     name: "Utterance Word Index"
     id: utterance_word_index_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       char buf[16];
       snprintf(buf, sizeof(buf), "%d", id(utterance_word_index));
@@ -1947,7 +2547,7 @@ text_sensor:
   - platform: template
     name: "Utterance Total Words"
     id: utterance_total_words_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       char buf[16];
       snprintf(buf, sizeof(buf), "%d", id(utterance_total_words));
@@ -1956,7 +2556,7 @@ text_sensor:
   - platform: template
     name: "Signal Kind"
     id: signal_kind_sensor
-    update_interval: 1s
+    update_interval: 30s
     lambda: |-
       return id(signal_kind);
 
@@ -2056,9 +2656,17 @@ font:
   - file: "../assets/fonts/IBMPlexMono-Regular.ttf"
     id: plex_mono_12
     size: 12
-    glyphs: " .,:;'\"!|+*xoO@_~=#%-/\\()v^<>"
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 
   - file: "../assets/fonts/IBMPlexMono-Medium.ttf"
     id: plex_mono_28
     size: 28
     glyphs: "ADNR"
+
+  # Cycle 4.1 — 16px live STT transcript band above Narada's head.
+  # Two rows of red text on a white background. Same ASCII glyph set
+  # as plex_mono_12.
+  - file: "../assets/fonts/IBMPlexMono-Regular.ttf"
+    id: plex_mono_16
+    size: 16
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"

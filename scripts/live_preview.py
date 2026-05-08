@@ -93,6 +93,10 @@ def build_state(args) -> State:
         lightning=args.lightning,
         tree_species=args.tree_species,
         ufo_mode=args.ufo_mode,
+        bhumi=args.bhumi,
+        alien_activity=args.alien_activity,
+        alien_mood=args.alien_mood,
+        alien_speech=args.alien_speech,
     )
     if args.hour is None:
         try:
@@ -129,6 +133,12 @@ def main() -> int:
                    choices=["pine", "oak", "mixed"])
     p.add_argument("--ufo-mode", default="grey",
                    choices=["grey", "mood", "outline"])
+    p.add_argument("--bhumi", default="ufo_interior",
+                   choices=["landscape", "ufo_interior"])
+    p.add_argument("--alien-activity", default="resting")
+    p.add_argument("--alien-mood", default="neutral",
+                   choices=["neutral", "happy", "upset", "sad", "playful"])
+    p.add_argument("--alien-speech", default="")
     args = p.parse_args()
 
     if not args.no_toggle:

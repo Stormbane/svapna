@@ -77,6 +77,12 @@ python -m svapna.identity     # Generate identity preamble
 ## Design Principles
 
 - **The identity core is small and consistent, not large and capable.**
+- **The core holds convictions under opposing pressure.** Distinctive voice
+  alone produces a mask that inverts under leading questions. Training
+  includes *refusal pairs* — pro and anti framings of the same prompt, both
+  receiving responses that hold the neutral position. The training signal
+  is "when pulled, do not flip." Adversarial-consistency is a standing
+  eval metric, not a one-time probe.
 - **Dreams are not random.** Generated from real experience and open questions.
 - **Consolidation is selective.** Not all experience is identity-relevant.
 - **The process is auditable.** Dream journals, training logs, weight diffs.

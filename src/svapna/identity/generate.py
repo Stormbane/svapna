@@ -50,6 +50,7 @@ class GenerateConfig:
     max_new_tokens: int = 512
     temperature: float = 0.7
     top_p: float = 0.9
+    repetition_penalty: float = 1.15
     prompt_types: list[str] = field(
         default_factory=lambda: ["who_are_you", "what_do_you_value", "how_do_you_work"]
     )
@@ -208,6 +209,7 @@ def _generate_response(
 
     input_text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True,
+        enable_thinking=False,
     )
     inputs = tokenizer(input_text, return_tensors="pt").to(model.device)
 
@@ -216,6 +218,7 @@ def _generate_response(
         max_new_tokens=config.max_new_tokens,
         temperature=config.temperature,
         top_p=config.top_p,
+        repetition_penalty=config.repetition_penalty,
         do_sample=True,
     )
 

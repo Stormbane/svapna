@@ -21,7 +21,8 @@ if str(src) not in sys.path:
 from svapna.train.train import train
 
 if __name__ == "__main__":
-    training_data = project_root / "data" / "training" / "2026-04-18.jsonl"
+    from datetime import date
+    training_data = project_root / "data" / "training" / f"{date.today()}.jsonl"
     if not training_data.exists():
         print(f"ERROR: training data not found at {training_data}")
         sys.exit(1)

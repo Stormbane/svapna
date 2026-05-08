@@ -38,7 +38,8 @@ async def run(cfg: Config) -> int:
     spk = f" speaker_id={cfg.piper_speaker_id}" if cfg.piper_speaker_id is not None else ""
     print(f"loading piper voice: {cfg.piper_voice}{spk} volume={cfg.piper_volume}...", flush=True)
     t0 = time.monotonic()
-    tts = PiperTTS(cfg.piper_model_dir, cfg.piper_voice, cfg.piper_speaker_id, cfg.piper_volume)
+    tts = PiperTTS(cfg.piper_model_dir, cfg.piper_voice, cfg.piper_speaker_id,
+                   cfg.piper_volume, cfg.piper_length_scale)
     print(f"  loaded in {time.monotonic() - t0:.1f}s "
           f"(rate={tts.sample_rate}Hz)", flush=True)
 
@@ -54,6 +55,26 @@ async def run(cfg: Config) -> int:
     client = APIClient(cfg.device_ip, cfg.api_port, password="")
     await client.connect(login=True)
 
+    # Discover media_player entity key. Needed so the bridge can send
+    # a delayed stop+play_media "kick" after TTS_END to flush the
+    # announcement_pipeline's prefill gate (the queue otherwise sits
+    # paused for 8–40s after Decoded audio until something else jolts
+    # it — observed 2026-05-04). Test on the next turn proved that the
+    # second wake's `media_player.stop` was what unblocked the queue.
+    mp_key: int | None = None
+    try:
+        entities, _services = await client.list_entities_services()
+        for e in entities:
+            tname = type(e).__name__.lower()
+            if "mediaplayer" in tname or "media_player" in tname:
+                mp_key = e.key
+                print(f"media_player: key={mp_key} name={getattr(e, 'name', '?')!r}", flush=True)
+                break
+        if mp_key is None:
+            print("warn: no media_player entity — kick disabled", flush=True)
+    except Exception as e:
+        print(f"warn: list_entities failed ({e}) — kick disabled", flush=True)
+
     embodiment: EmbodimentClient | None = None
     if cfg.embodiment_ip:
         embodiment = EmbodimentClient(cfg.embodiment_ip, cfg.embodiment_port)
@@ -67,6 +88,7 @@ async def run(cfg: Config) -> int:
         tts_server=tts_server,
         streaming_tts=cfg.streaming_tts,
         embodiment=embodiment,
+        media_player_key=mp_key,
     )
 
     unsub = client.subscribe_voice_assistant(

@@ -37,25 +37,12 @@ Thumbs.db
 models/base/
 models/lora/
 
-# Data (raw conversations contain private content)
-data/raw/
-data/consolidated/
-data/dreams/
-data/training/
-data/journals/
-data/metrics/
-data/heartbeat/
-data/sacred/
-data/identity/
-data/curated/
-data/expressions/
+# Data — local only (raw conversations + experiment outputs may contain private content)
+data/
 
 # Vendored / reference firmware binaries (too large, can be re-downloaded)
 firmware/xiaozhi-esp-box-3/
 firmware/xiaozhi-esp-box-3.zip
-
-# Evaluations are TRACKED (identity evolution record)
-# data/evaluations/ is NOT gitignored
 
 # Agent personal files
 .ai/soul.md
@@ -64,10 +51,14 @@ firmware/xiaozhi-esp-box-3.zip
 
 # Personal identity + manifesto files (memory tree lives in ~/.narada/, these are local-only)
 identity_manifest.json
+identity_manifest.md
 config/sacred-manifest.yml
 manifesto.md
 values_reflection.md
 svapna_yajna.md
+
+# Voice reference samples at repo root (large-ish, regenerable from Piper)
+/sample_libritts_r_*.wav
 
 # Compiled training cache (regenerable)
 unsloth_compiled_cache/

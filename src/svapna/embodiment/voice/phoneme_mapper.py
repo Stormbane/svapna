@@ -45,7 +45,14 @@ class PhonemeMapper:
         """Return the phoneme bucket for one PCM chunk (int16 mono).
 
         Empty chunk → REST. Otherwise compute normalized RMS and
-        bucket into the 5 mouth shapes."""
+        bucket into the 5 mouth shapes.
+
+        Earlier versions alternated within each band for "variety";
+        in practice that just made the placeholder mouth flash
+        between bright primary-color squares at 16 Hz. Steady mapping
+        — same amplitude → same phoneme — reads much calmer. Pipeline
+        also only pushes set_phoneme on change, so a sustained
+        amplitude doesn't re-blit the mouth at all."""
         if not pcm_bytes:
             return Phoneme.REST
         arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
@@ -53,21 +60,15 @@ class PhonemeMapper:
             return Phoneme.REST
         rms = float(math.sqrt(np.mean(arr * arr))) / 32767.0
 
-        self._counter += 1
-        alt = self._counter & 1
-
         if rms < _T_REST:
             return Phoneme.REST
         if rms < _T_MBP:
             return Phoneme.MBP
         if rms < _T_LOW:
-            # quiet vowel — alternate EE / MBP for slight variety
-            return Phoneme.EE if alt else Phoneme.MBP
+            return Phoneme.EE
         if rms < _T_MID:
-            # mid vowel — alternate EE / OH
-            return Phoneme.OH if alt else Phoneme.EE
-        # loud vowel — alternate AA / OH
-        return Phoneme.AA if alt else Phoneme.OH
+            return Phoneme.OH
+        return Phoneme.AA
 
 
 __all__ = ["PhonemeMapper"]

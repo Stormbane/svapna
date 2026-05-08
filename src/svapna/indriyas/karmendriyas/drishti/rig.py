@@ -21,7 +21,7 @@ from typing import Any
 
 from svapna.indriyas.karmendriyas.drishti import vocabulary as V
 from svapna.indriyas.karmendriyas.drishti.vocabulary import (
-    ACCENTS, ANTENNAE, ARMS, BROW, EARS, EYES, LEGS, MOOD_OVERLAYS,
+    ACCENTS, ANTENNAE, ARMS, BROW, CHEEKS, EARS, EYES, LEGS, MOOD_OVERLAYS,
     MOUTH, PRESETS, AccentFrame, Animated, ArmPose,
 )
 
@@ -41,6 +41,7 @@ class Rig:
     mouth: str = "smile"
     arms: str = "rest"
     legs: str = "stand"
+    cheeks: str = "default"
     accent_l: str = "none"
     accent_r: str = "none"
     x_offset: int = 0
@@ -102,7 +103,7 @@ def compose(rig: Rig, t_ms: float) -> tuple[list[str], list[tuple[int, int, str]
             for decorations that spill outside the silhouette envelope
             (ear waves, hand floats, accents). col_offset can be negative.
     """
-    antennae = _resolve(ANTENNAE, rig.antennae, t_ms, "..---..")
+    antennae = _resolve(ANTENNAE, rig.antennae, t_ms, "..-=-..")
     brow     = _resolve(BROW,     rig.brow,     t_ms, "_ _")
     eyes     = _resolve(EYES,     rig.eyes,     t_ms, "O O")
     ears     = _resolve(EARS,     rig.ears,     t_ms, ("", ""))
@@ -118,22 +119,31 @@ def compose(rig: Rig, t_ms: float) -> tuple[list[str], list[tuple[int, int, str]
 
     brow_row = f"  /  {brow}  \\  "
 
-    # Mouth — handle 5-char talking-wide variants.
+    # Mouth — handle 5-char talking-wide variants. Cheeks `)` `(` flank
+    # 3-char mouths (resolved from the CHEEKS vocabulary so future
+    # variants — e.g. blushed `}{`, dimpled `>< ` — slot in cleanly).
     if isinstance(mouth, str) and len(mouth) == 5:
         mouth_row = _center5(mouth)
     else:
-        mouth_row = _center3(mouth if isinstance(mouth, str) else "\\_/")
+        m = mouth if isinstance(mouth, str) else "\\_/"
+        cheeks = _resolve(CHEEKS, rig.cheeks, t_ms, ")(")
+        cl, cr = (cheeks[0], cheeks[1]) if len(cheeks) >= 2 else (")", "(")
+        mouth_row = f" | {cl} {m} {cr} | "   # 13 chars
 
-    # Ears row — `C    u    D` always inside (1-pad outside); decorations spill.
+    # Ears row — `C    u    D` (C/D are the ears, flush with the wall);
+    # ear pulse decorations spill outside this envelope.
     ear_row = " C    u    D "  # already 13 chars
 
     # Antennae — `..---..` is 7 chars; centered with 3 spaces each side.
     ant_row = f"   {antennae}   "
 
+    # Body silhouette with sacred thread (yajnopavita) `/` running from
+    # right shoulder down across the torso, and dhoti `\` wrapping the
+    # lower body — both identity features that persist across activities.
     chin_row    = "  \\_______/  "       # 2+9+2 = 13
-    neck_row    = "   |     |   "         # 3+7+3 = 13
-    waist_row   = "   |     |   "         # 3+7+3 = 13
-    lower_row   = "   |_____|   "         # 3+7+3 = 13
+    neck_row    = "   |    /|   "        # `/` is the top of sacred thread
+    waist_row   = "   |  \\  |   "       # `\` is the dhoti drape
+    lower_row   = "   |___\\_|   "       # `\` continuing dhoti through belt
     legs_row    = f"   {legs}   "         # 3+7+3 = 13
 
     sh_row = arm_pose.shoulders

@@ -43,7 +43,7 @@ class Animated:
 # the renderer pads them to a fixed indent.
 # ---------------------------------------------------------------------------
 ANTENNAE: dict[str, object] = {
-    "default":   "..---..",
+    "default":   "..-=-..",
     "alert":     "^^---^^",
     "droopy":    ",,---,,",
     "thinking":  "??---??",
@@ -157,8 +157,23 @@ class ArmPose:
         return cls(shoulders, hands, (float_l, float_r))
 
 
+# ---------------------------------------------------------------------------
+# CHEEKS (row 4 — pair of glyphs flanking the mouth, inside the wall pipes)
+# Each entry is a 2-char string: (left_cheek, right_cheek). Painted only on
+# 3-char mouth rows (5-char talking visemes fill the inner space already).
+# ---------------------------------------------------------------------------
+CHEEKS: dict[str, object] = {
+    "default":  ")(",
+    "blushed":  "}{",
+    "dimpled":  "><",
+    "puffed":   "OO",
+    "sunken":   "..",
+    "none":     "  ",
+}
+
+
 ARMS: dict[str, object] = {
-    "rest":         ArmPose.from_lines("/|     |\\", "O |_____| O"),
+    "rest":         ArmPose.from_lines("/|   / |\\", "O |__/__| O"),
     "right_raised": ArmPose.from_lines("/|     |/",  "O |_____|  ", float_r="O"),
     "left_raised":  ArmPose.from_lines("\\|     |\\", "  |_____| O", float_l="O"),
     "both_up":      ArmPose.from_lines("\\|     |/",  "  |_____|  ", float_l="O", float_r="O"),

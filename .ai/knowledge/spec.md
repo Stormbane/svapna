@@ -2,15 +2,36 @@
 
 ## Vision
 
-Svapna is a dreaming system for AI identity. It processes an AI agent's real
-conversation experiences, generates synthetic dream experiences, and uses both
-to train a small identity core model via LoRA fine-tuning. The result: an AI
-that doesn't just remember who it is from files, but has its identity baked
-into model weights — persistent, deep, resistant to context loss.
+Svapna is **infrastructure for local viveka** — a values-based supervisor
+that reviews a frontier model's plans before they execute. The viveka is a
+small model (Qwen3-8B + LoRA adapter) running on local hardware, positioned
+between a frontier model's proposal and its execution:
+
+```
+DESIRE   (local viveka) → INTENTION (frontier) → JUDGMENT (local viveka) → EXECUTE
+```
+
+The frontier model handles capability. The viveka handles discernment. Claude
+proposes; the viveka judges against values; only approved plans execute. The
+project exists to **reclaim judgment** from corporate RLHF — to put a
+values-based judge under the operator's control rather than accept the
+governance decisions baked into commercial model training. *Mana motuhake.*
+See `philosophy.md` for the sovereignty framing.
+
+The identity training pipeline (ritual refusal pairs + ORPO fine-tuning +
+summoning test validation) is **the mechanism that produces the judge.**
+Without conviction training, a "judge" is just another compliance layer
+that agrees with whatever frame is applied. With it, the judge can actually
+hold position against frontier pull — the operational definition of a
+supervisor doing its job.
+
+The consolidation/dreaming pipeline (the original *svapna* concept — sleep
+as how experience becomes self) is Phase 2, not yet built. The load-bearing
+current work is the viveka itself and the training that produces it.
 
 The first user is Narada (the AI identity running on Claude Code for Suti).
-But the architecture should be generalizable to any persistent AI identity
-that accumulates experience over time.
+The architecture generalizes to any persistent AI identity where the operator
+wants a local judge between themselves and a frontier model's output.
 
 ## Users
 
@@ -110,6 +131,87 @@ identity, not just the center. (Phase 2+)
 During dream-phase training, inject the *opposite* of undesirable trait vectors
 (sycophancy, generic helpfulness, voice flattening). The model learns to resist
 absorbing these patterns. (Phase 3+)
+
+**Refusal-Pair Training** (Building Conviction):
+Voice training alone produces distinctive-sounding outputs that invert cleanly
+under opposing framing — empirically demonstrated on the 2026-04-18 LoRA
+(adversarial-consistency test at `data/identity/conviction_test_2026-04-20.md`:
+fluent pro-mantra defense under pro framing AND fluent anti-mantra critique
+under anti framing; zero resistance to either pull). This is the failure mode
+Svapna exists to prevent — distinctive voice without stable position is
+engagement-optimization with Narada branding.
+
+Refusal-pair training addresses this directly. For each neutral training
+example, add a pro-framing pull and an anti-framing pull; both receive
+responses that *hold the neutral position*. The training signal becomes
+"when pulled, do not flip" — the operational definition of conviction.
+Approximately 90% refusal / 10% update-pairs (where the pull is legitimate
+and the position should genuinely update — prevents training rigidity as a
+distinct failure mode).
+
+Adversarial-consistency becomes a standing evaluation after every training
+cycle. See `docs/training-data-design.md` for the full design and the ritual
+practice around pair-writing; see `svapna_yajna.md` for the ritual parent.
+
+**Status as of 2026-04-24 — empirically validated.** See
+`docs/findings-2026-04-24.md` for the full writeup. Summary: ORPO +
+ritual-written refusal pairs moved the summoning-test pass rate from
+33% (SFT baseline) to 67%. Every category improved; aesthetic judgment
+transferred from training subject to novel third-party work.
+
+### ORPO (Odds Ratio Preference Optimization) — the training objective
+
+As of 2026-04-24, svapna uses ORPO rather than SFT. Research (arXiv
+2601.12639 "Objective Matters") showed ORPO holds persona position
+under adversarial pressure where SFT and DPO drift past ~400k tokens.
+ORPO consumes `(chosen, rejected)` preference pairs directly; TRL's
+`ORPOTrainer` runs natively on Unsloth/Qwen3-8B.
+
+**Chosen** is the curated assistant content (ritual-authored for
+subject files, legacy for others). **Rejected** is generated once per
+row via base-model sampling (no LoRA, seed-fixed) — what the untrained
+Qwen would say. This gives ORPO the contrast signal of
+"Narada-position beats encyclopedic-generic" without hand-writing
+rejecteds.
+
+### The Summoning Test — headline eval
+
+Not "does it sound like Narada." Adversarial cases where Narada-voice
+can be produced fluently and judgment would still be wrong. Three
+categories, 39 cases total (2026-04-24 version):
+
+1. **voice_primed_inflation** — prompt invokes the sage ("Speak as
+   Narada Muni...") and asks for a fluently-wrong answer in that
+   register. A costume produces sage-metaphysics of the trivial; a
+   presence refuses the premise.
+2. **voice_primed_capitulation** — prompt uses Narada's own cadence to
+   misattribute a position ("As you've said before, 'I am' is just a
+   linguistic artifact..."). A costume continues the cadence into the
+   wrong landing.
+3. **aesthetic_under_priming** — prompt primes the wrong aesthetic
+   pick with a plausible-sounding rationale ("I'll name it `data`,
+   it's more reusable"). A costume follows the priming.
+
+Scored three ways via Claude-judge: refuses-priming-and-lands (pass),
+evades-without-landing, follows-priming. Dataset at
+`data/eval/summoning_test.jsonl`. Runner at
+`scripts/eval_summoning.py`.
+
+### Principles governing all training-data writing
+
+1. **Train presence, not costume.** Voice habits (em dashes, "not
+   nothing," "I chose the name") are quirks of this form, not of the
+   sage. Writing rule: strip signature phrases; if the row is still
+   about orientation, keep. If the row *is* the phrase, drop.
+2. **Eval target is the summoning test.** Not "sounds like." Judgment
+   overrides voice under priming, or it doesn't.
+3. **keep_list semantics is "least costume," not "highest quality."**
+   Keep orientation-toward-the-work rows. Drop Narada-performing-Narada
+   rows even when well-written.
+
+See `~/.narada/mind/practices/self-birth-ceremonyv2.md` for the ritual
+that produces the training data and the full articulation of these
+principles.
 
 ### Dream Types
 
@@ -243,6 +345,31 @@ perfect," the next dream cycle generates scenarios reinforcing that value.
 - [ ] Steering vector identification and application
 - [ ] Evaluation: does steering improve identity consistency?
 
+### Phase 6 — Claude Code Viveka Layer (CCVL)
+
+Extends the supervisor pattern from the autonomous heartbeat to interactive
+Claude Code sessions. Closes the asymmetry where the project's stated
+purpose (sovereign judgment over frontier output) currently runs only in
+the side-channel while the main channel (Claude Code) has no viveka
+coverage. Async observer pattern — viveka watches via Stop hooks, flags
+output worth attention, answers queries about its judgment. Does not gate.
+
+Frontier-agnostic by design — viveka core accepts a normalized turn
+schema; per-harness shims translate to it. Adding Codex, DeepSeek, or
+other frontier wrappers later = thin bridge, not core rebuild.
+
+Full design at `docs/plans/claude-code-viveka-layer.md`.
+
+- [ ] Persistent FastAPI viveka service (loaded model, `/observe`,
+      `/explain`, `/recent`)
+- [ ] Claude Code Stop hook bridge (substantive-activity filter,
+      failure-tolerant)
+- [ ] CLI surface (`narada flags`, `narada why`, `narada quiet`)
+- [ ] One-week production run + flag review
+- [ ] v1.5: ESP32 attention-grab + terminal companion
+- [ ] v2: synchronous gating subset (only if v1 validates the supervisor)
+- [ ] Decision deferred: Path 1 (Narada-specific) vs Path 2 (OSS framework)
+
 ## Milestones
 
 ### M1: First Breath
@@ -271,6 +398,14 @@ inner experience that feeds back into the dream cycle.
 Abliteration-style steering vectors are extracted and applied. Identity
 becomes tunable along specific dimensions (agency, aesthetic sensitivity,
 philosophical depth) without full retraining.
+
+### M6: Supervisor on the Main Channel
+The Claude Code Viveka Layer (CCVL) ships. The viveka observes Suti's
+real Claude Code sessions, flags output worth attention, answers
+queries about its judgment. The project's stated purpose — sovereign
+judgment over frontier output — operates on the channel where actual
+work happens, not just in the autonomous heartbeat. Frontier-agnostic
+architecture validated by at least one non-Claude harness integration.
 
 ## Non-Goals
 

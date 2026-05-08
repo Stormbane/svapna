@@ -18,7 +18,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Callable
 
-from aioesphomeapi import VoiceAssistantAudioSettings
+from aioesphomeapi import MediaPlayerCommand, VoiceAssistantAudioSettings
 
 from .embodiment_client import EmbodimentClient, Mood, Phoneme
 from .phoneme_mapper import PhonemeMapper
@@ -48,6 +48,15 @@ def _default_vad_factory():
 STREAM_CHUNK_MS = 60
 
 
+# Delay before the kick stop+play_media. The device needs enough time
+# to receive TTS_END, run on_tts_end, queue the URL, fetch the WAV,
+# and decode the header (so the pipeline is in ANNOUNCING state and a
+# stop actually has something to clear). 600ms covers the Decoded-audio
+# log line under our observed timing. Too short = stop fires before the
+# queue has anything; too long = user hears the gap.
+KICK_DELAY_S = 0.6
+
+
 class Pipeline:
     def __init__(
         self,
@@ -59,6 +68,7 @@ class Pipeline:
         streaming_tts: bool,
         vad_factory: Callable[[], "SileroVad"] | None = None,
         embodiment: EmbodimentClient | None = None,
+        media_player_key: int | None = None,
     ):
         self.client = client
         self.stt = stt
@@ -71,6 +81,9 @@ class Pipeline:
         # All calls are guarded so a missing/disconnected embodiment
         # never breaks a turn.
         self.embodiment = embodiment
+        # media_player entity key for the announcement-queue kick.
+        # See _kick_media_player.
+        self._media_player_key = media_player_key
         self._phoneme_mapper = PhonemeMapper()
 
         self._buf: list[bytes] = []
@@ -210,6 +223,13 @@ class Pipeline:
         if self.embodiment:
             asyncio.create_task(self.embodiment.set_speaking(True))
         await self._event(VAEvent.VOICE_ASSISTANT_TTS_END, {"url": url})
+        # Kick: the device's announcement_pipeline reliably sits paused
+        # for 8–40s after Decoded audio until something jolts the state
+        # machine. The "second wake fires media_player.stop on_start"
+        # pattern (observed 2026-05-04) flushes the queue. Replicate it
+        # from the bridge: stop+re-play_media after a short delay.
+        if self._media_player_key is not None:
+            asyncio.create_task(self._kick_media_player(url))
         if self.embodiment:
             # Estimate playback duration from WAV length and schedule
             # speaking=False afterwards. Approximate (WAV header is
@@ -222,6 +242,28 @@ class Pipeline:
         if self.embodiment:
             await self.embodiment.set_speaking(False)
 
+    async def _kick_media_player(self, url: str) -> None:
+        """Force the announcement queue to advance after TTS_END.
+
+        Sequence: wait KICK_DELAY_S so the device has fetched + decoded
+        the WAV, then send STOP (clears the deque + drops the paused
+        decoder), then PLAY_MEDIA with the same URL (re-queues — this
+        time the state machine starts cleanly because the prior stuck
+        item is gone).
+        """
+        try:
+            await asyncio.sleep(KICK_DELAY_S)
+            self.client.media_player_command(
+                self._media_player_key, command=MediaPlayerCommand.STOP
+            )
+            await asyncio.sleep(0.05)
+            self.client.media_player_command(
+                self._media_player_key, media_url=url, announcement=True
+            )
+            print("  kick: stop+play_media sent", flush=True)
+        except Exception as e:
+            print(f"  kick failed: {e}", file=sys.stderr)
+
     async def _tts_streaming(self, reply: str) -> None:
         """Synthesize sentence-by-sentence, stream PCM via API audio.
 
@@ -231,6 +273,7 @@ class Pipeline:
         """
         await self._event(VAEvent.VOICE_ASSISTANT_TTS_STREAM_START)
         # Embodiment: speaking on, mouth begins driving from chunks.
+        last_phoneme = None
         if self.embodiment:
             self._phoneme_mapper.reset()
             asyncio.create_task(self.embodiment.set_speaking(True))
@@ -246,7 +289,12 @@ class Pipeline:
                 self.client.send_voice_assistant_audio(chunk)
                 if self.embodiment:
                     ph = self._phoneme_mapper.map_chunk(chunk)
-                    asyncio.create_task(self.embodiment.set_phoneme(ph))
+                    # Only push when the phoneme actually changes —
+                    # holding a vowel shouldn't re-blit the mouth at
+                    # 16 Hz against a placeholder palette.
+                    if ph != last_phoneme:
+                        last_phoneme = ph
+                        asyncio.create_task(self.embodiment.set_phoneme(ph))
                 await asyncio.sleep(STREAM_CHUNK_MS / 1000 * 0.95)
         if self.embodiment:
             asyncio.create_task(self.embodiment.set_speaking(False))

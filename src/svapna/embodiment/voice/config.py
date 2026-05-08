@@ -14,7 +14,8 @@ DEFAULT_WHISPER_MODEL = "small.en"
 DEFAULT_PIPER_MODEL_DIR = Path.home() / ".cache" / "piper"
 DEFAULT_PIPER_VOICE = "en_US-libritts_r-medium"
 DEFAULT_PIPER_SPEAKER_ID: int | None = 829  # auditioned 2026-05-01; libritts_r-medium
-DEFAULT_PIPER_VOLUME = 4.0  # bumped — Piper's default 1.0 is sub-audible on BOX-3 speaker
+DEFAULT_PIPER_VOLUME = 1.5  # research 2026-05-03: clean signal beats stacked amplification — see audio_dac.set_volume in unified yaml
+DEFAULT_PIPER_LENGTH_SCALE = 1.3  # 30% slower; default 1.0 reads too fast for Narada's contemplative voice
 DEFAULT_SYSTEM_PROMPT = "embodiment/voice/narada-voice.md"
 DEFAULT_BRAIN = "claude"  # one of: claude, heartbeat
 DEFAULT_CONVERSATION_WINDOW_S = 30.0
@@ -30,6 +31,7 @@ class Config:
     piper_voice: str
     piper_speaker_id: int | None
     piper_volume: float
+    piper_length_scale: float
     system_prompt: Path
     brain: str
     conversation_window_s: float
@@ -55,6 +57,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
                    help="Speaker ID for multi-speaker voices (libritts has 904)")
     p.add_argument("--piper-volume", type=float, default=DEFAULT_PIPER_VOLUME,
                    help="Piper amplitude multiplier (default 4.0 — BOX-3 speaker is quiet)")
+    p.add_argument("--piper-length-scale", type=float, default=DEFAULT_PIPER_LENGTH_SCALE,
+                   help="Piper length_scale: >1 = slower, <1 = faster (default 1.3)")
     p.add_argument("--system-prompt", type=Path, default=Path(DEFAULT_SYSTEM_PROMPT))
     p.add_argument("--brain", choices=["claude", "heartbeat"], default=DEFAULT_BRAIN,
                    help="Which brain to wire. heartbeat is currently a stub.")
@@ -81,6 +85,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         piper_voice=args.piper_voice,
         piper_speaker_id=args.piper_speaker_id,
         piper_volume=args.piper_volume,
+        piper_length_scale=args.piper_length_scale,
         system_prompt=args.system_prompt,
         brain=args.brain,
         conversation_window_s=args.conversation_window_s,

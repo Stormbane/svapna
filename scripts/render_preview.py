@@ -128,6 +128,8 @@ class State:
     alien_activity: str = ""      # "" → derive from activity_mode
     alien_mood: str = "neutral"   # "neutral" | "happy" | "upset" | "sad" | "playful"
     alien_speech: str = ""
+    listening_active: bool = False
+    stt_transcript: str = ""
 
 
 def render(state: State) -> Image.Image:
@@ -149,43 +151,52 @@ def _render_ufo_interior(state: State) -> Image.Image:
     font = ImageFont.truetype(str(FONT_DIR / "IBMPlexMono-Regular.ttf"), 12)
     now_ms = state.now_ms
 
-    # Cockpit walls — dark blue-grey, not pure black so contrast lives.
-    cockpit = (0x15, 0x18, 0x20)
-    draw.rectangle((0, 0, SCREEN_W, SCREEN_H), fill=cockpit)
-
-    # Porthole — small window in upper-right; alien fills most of the screen
-    # (per Suti's mandate that the alien get majority of screen real estate).
-    px, py, pr = 268, 38, 32
+    # ----- UFO cabin: large windows on top, opaque floor on bottom -----
+    activity_for_porthole = state.alien_activity or alien_for_activity(state.activity_mode)
+    has_speech = bool(state.alien_speech) and activity_for_porthole == "speaking"
+    floor_y = 168
+    top_frame_h = 10
+    sill_h = 4
+    mull1_col = 14
+    mull2_col = 30
+    mull_w_px = 12
+    floor_col = (0x4A, 0x4E, 0x58)
+    frame_col = (0x90, 0x96, 0xA0)
     sky = _sky_color(state.hour, state.lightning)
-    draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=sky)
-    # Porthole rim — medium grey ring.
-    rim = (0x60, 0x65, 0x70)
-    for w in range(2):
-        draw.ellipse((px - pr - w, py - pr - w, px + pr + w, py + pr + w),
-                     outline=rim)
-    # Stars through the porthole (night, clear) — pick the few that fall
-    # inside the circle.
     is_day = (state.hour >= 6.0 and state.hour < 18.0)
+
+    # 1. Sky band fills the full width as backdrop.
+    draw.rectangle((0, top_frame_h, SCREEN_W, floor_y), fill=sky)
+    # 2. Floor band.
+    draw.rectangle((0, floor_y, SCREEN_W, SCREEN_H), fill=floor_col)
+    # 3. Stars in the sky band (night, clear).
     if (not is_day) and state.cloud_pct < 50.0:
         for sx, sy, phase in STARS:
             sx_px = sx * CELL_W + CELL_W // 2
             sy_px = sy * CELL_H + CELL_H // 2
-            if (sx_px - px) ** 2 + (sy_px - py) ** 2 > (pr - 6) ** 2:
+            if not (top_frame_h + 4 < sy_px < floor_y - sill_h - 4):
                 continue
             b = (math.sin(now_ms / 700.0 + phase) + 1.0) * 0.5
             if b > 0.65:
                 draw.text((sx_px, sy_px), "*", font=font,
-                          fill=(0xD4, 0xCC, 0xB8), anchor="mm")
-    # Sun/moon through the porthole.
+                          fill=(0xE8, 0xE0, 0xC4), anchor="mm")
+    # 4. Sun (day) — drifts left→right across the sky band.
     if is_day:
         t_day = (state.hour - 6.0) / 12.0
-        sun_x = int(t_day * (COLS - 1))
-        sun_y = max(1, int(round(6.0 - math.sin(math.pi * t_day) * 6.0)))
-        cx_px = sun_x * CELL_W + CELL_W // 2
-        cy_px = sun_y * CELL_H + CELL_H // 2
-        if (cx_px - px) ** 2 + (cy_px - py) ** 2 < (pr - 8) ** 2:
-            draw.ellipse((cx_px - 6, cy_px - 6, cx_px + 6, cy_px + 6),
-                         fill=(0xF4, 0xD0, 0x60))
+        sxp = int(t_day * SCREEN_W)
+        syp = int(top_frame_h + 16 + (1.0 - math.sin(math.pi * t_day)) * 28.0)
+        if top_frame_h + 4 < syp < floor_y - sill_h - 4:
+            draw.ellipse((sxp - 7, syp - 7, sxp + 7, syp + 7),
+                         fill=(0xF8, 0xD8, 0x70))
+    # 5. Frame overlay — top, sill, two vertical mullions.
+    draw.rectangle((0, 0, SCREEN_W, top_frame_h), fill=frame_col)
+    draw.rectangle((0, floor_y - sill_h, SCREEN_W, floor_y), fill=frame_col)
+    draw.rectangle((mull1_col * CELL_W, top_frame_h,
+                    mull1_col * CELL_W + mull_w_px, floor_y),
+                   fill=frame_col)
+    draw.rectangle((mull2_col * CELL_W, top_frame_h,
+                    mull2_col * CELL_W + mull_w_px, floor_y),
+                   fill=frame_col)
 
     # Mood tint for accent.
     tint = _bilinear_tint(state.mood_valence, state.mood_arousal)
@@ -212,14 +223,27 @@ def _render_ufo_interior(state: State) -> Image.Image:
 
     rows, extras = compose(rig, now_ms)
 
-    # Color palette for the alien.
-    skin    = (0x90, 0xA8, 0x70)
-    eyes_col = (0xE0, 0xE4, 0xEA)
+    # Color palette for the alien — bright cream so it pops against the
+    # blue sky behind the windows.
+    skin    = (0xF0, 0xE8, 0xD0)
+    eyes_col = (0xF8, 0xF8, 0xE8)
     accent_col = tuple(_clamp(int(c * 1.15), 0, 255) for c in tint)
 
-    # Anchor position for the alien — center-left of screen, fills most of it.
-    alien_col = 14 + rig.x_offset    # 13-wide alien around cols 14-27
-    alien_row = 1                     # high up, alien has majority of screen
+    # Anchor position for the alien — feet flush with screen bottom.
+    # legs sit on rig row 11; we anchor so legs glyph bottom = SCREEN_H.
+    # When the speech bubble is up, shift the alien left so the bubble
+    # can occupy the right ~20 cols without overlapping the face.
+    alien_col = (0 if has_speech else 14) + rig.x_offset
+    # Idle animations: breathing for non-walking/non-bubble states;
+    # resting also paces ±5 cols on a 30s cycle.
+    breath_dy = 0
+    if activity_name not in ("walking_left", "walking_right") and not has_speech:
+        breath_dy = int(math.sin(now_ms / 4000.0 * 2 * math.pi) * 1.8)
+    if activity_name == "resting":
+        pt = (now_ms % 30000.0) / 30000.0
+        alien_col += int(math.sin(pt * 2 * math.pi) * 5.0)
+    alien_y_px = SCREEN_H - ALIEN_HEIGHT * CELL_H + breath_dy
+    alien_row = alien_y_px // CELL_H                # for extras anchoring
 
     # Color picker: most rows skin-colored; eyes row uses pale; mouth uses
     # smile-or-mood color; brow uses skin.
@@ -230,12 +254,34 @@ def _render_ufo_interior(state: State) -> Image.Image:
             return accent_col if rig.mouth.startswith("talking") else skin
         return skin
 
-    # Paint the 12 alien rows.
+    # Body fills — per-region rectangles hugging the inside of the ASCII
+    # silhouette so the glyph walls remain visible against the cabin sky.
+    skin_fill  = (0x4A, 0x30, 0x28)   # warm head tone
+    kurta_fill = (0x88, 0x3A, 0x18)   # saffron chest
+    dhoti_fill = (0x6A, 0x4A, 0x28)   # ochre dhoti
+    ax_px = alien_col * CELL_W
+    def _fill(col, row, w, h, color):
+        draw.rectangle((ax_px + col * CELL_W, alien_y_px + row * CELL_H,
+                        ax_px + (col + w) * CELL_W,
+                        alien_y_px + (row + h) * CELL_H), fill=color)
+    # Head: top wedge, main, chin wedge.
+    _fill(3, 1, 7, 1, skin_fill)
+    _fill(2, 2, 9, 3, skin_fill)
+    _fill(3, 5, 7, 1, skin_fill)
+    # Chest (rows 6..8) and dhoti (rows 9..10), inside torso walls.
+    _fill(4, 6, 5, 3, kurta_fill)
+    _fill(4, 9, 5, 2, dhoti_fill)
+
+    # Paint the 12 alien rows directly in pixel coords (bypasses the
+    # 16-row grid limit so feet can sit at SCREEN_H).
     for rix, row_text in enumerate(rows):
         for cix, ch in enumerate(row_text):
             if ch == " ":
                 continue
-            put(alien_col + cix, alien_row + rix, row_color(rix), ch)
+            x_px = (alien_col + cix) * CELL_W
+            y_px = alien_y_px + rix * CELL_H
+            if 0 <= x_px < SCREEN_W and 0 <= y_px < SCREEN_H:
+                draw.text((x_px, y_px), ch, font=font, fill=row_color(rix))
 
     # Paint the extras (ear waves, hand floats, accents).
     for (dx, dy, ch) in extras:
@@ -249,65 +295,146 @@ def _render_ufo_interior(state: State) -> Image.Image:
             c = (0xA0, 0xA8, 0xC0)
         put(alien_col + dx, alien_row + dy, c, ch)
 
+    # Live STT transcript — 16px on white panel; preceding words black,
+    # last word red. Panel height shrinks to 1 row when text fits.
+    if state.stt_transcript:
+        per_row = 30
+        max_total = per_row * 2
+        cw_16 = 10
+        t = state.stt_transcript
+        visible = t if len(t) <= max_total else "..." + t[-(max_total - 3):]
+        two_rows = len(visible) > per_row
+        row1 = visible[:per_row] if two_rows else visible
+        row2 = visible[per_row:] if two_rows else ""
+        last_space = visible.rfind(" ")
+        last_word_start = (last_space + 1) if last_space != -1 else 0
+        small_font = ImageFont.truetype(str(FONT_DIR / "IBMPlexMono-Regular.ttf"), 16)
+        bg_h = 40 if two_rows else 20
+        draw.rectangle((0, 12, SCREEN_W, 12 + bg_h), fill=(0xF8, 0xF8, 0xF0))
+        black = (0x18, 0x18, 0x18)
+        red = (0xC8, 0x18, 0x18)
+        def paint_row(y_px, row_offset, row):
+            if not row:
+                return
+            split = last_word_start - row_offset
+            if split >= len(row):
+                draw.text((8, y_px), row, font=small_font, fill=black)
+            elif split <= 0:
+                draw.text((8, y_px), row, font=small_font, fill=red)
+            else:
+                blk = row[:split]
+                rd = row[split:]
+                draw.text((8, y_px), blk, font=small_font, fill=black)
+                draw.text((8 + len(blk) * cw_16, y_px), rd,
+                          font=small_font, fill=red)
+        paint_row(12, 0, row1)
+        if two_rows:
+            paint_row(32, per_row, row2)
+
     # Speech bubble — when alien is speaking and there's text to show.
-    if state.alien_speech and activity_name == "speaking":
-        _draw_speech_bubble(draw, font, now_ms, state.alien_speech)
+    if has_speech:
+        _draw_speech_bubble(draw, font, now_ms, state.alien_speech,
+                            alien_col=alien_col, alien_y_px=alien_y_px)
 
     return img
 
 
-def _draw_speech_bubble(draw, font, now_ms: float, text: str) -> None:
-    """Render an expanding speech bubble that fills increasing screen area
-    based on text length, with text scrolling horizontally if it overflows."""
-    # Bubble target size grows with text length.
+def _wrap_text(text: str, chars_per_line: int) -> list[str]:
+    """Word-wrap text to chars_per_line; hard-breaks long words."""
+    lines: list[str] = []
+    cur = ""
+    for word in text.replace("\n", " \n ").split(" "):
+        if word == "\n":
+            if cur:
+                lines.append(cur)
+            cur = ""
+            continue
+        if not word:
+            continue
+        if len(cur) + (1 if cur else 0) + len(word) <= chars_per_line:
+            cur = (cur + " " + word) if cur else word
+        else:
+            if cur:
+                lines.append(cur)
+            if len(word) <= chars_per_line:
+                cur = word
+            else:
+                for j in range(0, len(word), chars_per_line):
+                    lines.append(word[j:j + chars_per_line])
+                cur = ""
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _draw_speech_bubble(draw, font, now_ms: float, text: str,
+                        alien_col: int, alien_y_px: int) -> None:
+    """ASCII-art speech bubble, drawn entirely with character glyphs to
+    match the alien's aesthetic. Tail (`<` and `\\`) extrudes left toward
+    the mouth. Multi-line word wrap + line scroll on overflow."""
     char_w = CELL_W
     char_h = CELL_H
-    # Animation: grow from a point at mouth (col 22, row 12) over 250ms.
-    growth_t = min(1.0, (now_ms % 100000) / 250.0)  # simplified — in real use, track speech-start
-    # For the standalone preview we just always show fully grown.
-    growth_t = 1.0
-    target_w_chars = min(40, max(10, len(text) // 2 + 8))
-    target_h_chars = max(3, (len(text) // max(1, target_w_chars - 4)) + 2)
-    bubble_w = int(target_w_chars * char_w * growth_t)
-    bubble_h = int(target_h_chars * char_h * growth_t)
-    # Position: right of alien, top half of screen if small; centered if large.
-    bx = 8
-    by = 8
-    if target_w_chars * char_w + 16 < SCREEN_W:
-        bx = SCREEN_W - bubble_w - 8
-    bubble_color = (0xE0, 0xE4, 0xEA)
-    bubble_outline = (0x80, 0x88, 0x95)
-    # Rounded rectangle bubble.
-    draw.rounded_rectangle((bx, by, bx + bubble_w, by + bubble_h),
-                           radius=10, fill=bubble_color, outline=bubble_outline,
-                           width=2)
-    # Tail pointing back to alien mouth.
-    alien_mouth_x = (16 + 6) * CELL_W   # rough alien center
-    alien_mouth_y = (6 + 4) * CELL_H
-    if bubble_w > 20:
-        draw.polygon([
-            (bx + 12, by + bubble_h),
-            (bx + 28, by + bubble_h),
-            (alien_mouth_x, alien_mouth_y - 4),
-        ], fill=bubble_color, outline=bubble_outline)
-    # Text inside — wraps and scrolls if too long.
-    inner_w_chars = max(1, target_w_chars - 4)
-    inner_h_chars = max(1, target_h_chars - 2)
-    visible_chars = inner_w_chars * inner_h_chars
-    if len(text) <= visible_chars:
-        display_text = text
+    W = 28          # outer bubble width in chars
+    H = 11          # outer bubble height in rows
+    bcol = 16       # bubble left col (where `/` corner sits)
+    brow = 5        # bubble top row (top edge underscores)
+    frame_color = (0xF8, 0xF8, 0xF0)
+    text_color = (0x28, 0x18, 0x10)
+    # Aged-parchment interior — warmer / yellower than cream.
+    bubble_fill = (0xE8, 0xD4, 0xA8)
+
+    # Frame strings.
+    top_edge   = " " + "_" * (W - 2) + " "
+    top_corner = "/" + " " * (W - 2) + "\\"
+    side       = "|" + " " * (W - 2) + "|"
+    bot        = "\\" + "_" * (W - 2) + "/"
+    tail_row   = " " * (W - 1) + "|"   # right wall only; left replaced by tail
+
+    bx_px = bcol * char_w
+    by_px = brow * char_h
+
+    # Centered fill inside the ASCII frame: inset 1 char + 2px on every
+    # side so the `/`, `\`, `|`, `_` frame chars draw cleanly on top.
+    fill_x = (bcol + 1) * char_w + 2
+    fill_y = (brow + 1) * char_h + 2
+    fill_w = (W - 2) * char_w - 4
+    fill_h = (H - 2) * char_h - 4
+    draw.rectangle((fill_x, fill_y, fill_x + fill_w, fill_y + fill_h),
+                   fill=bubble_fill)
+
+    def put_str(col, row, s, color=frame_color):
+        draw.text((col * char_w, row * char_h), s, font=font, fill=color)
+
+    put_str(bcol, brow,         top_edge)
+    put_str(bcol, brow + 1,     top_corner)
+    # Tail mid (row 2): `<` two chars left of bubble.
+    put_str(bcol - 2, brow + 2, "<")
+    put_str(bcol,     brow + 2, tail_row)
+    # Tail bot (row 3): `\` one char left of bubble.
+    put_str(bcol - 1, brow + 3, "\\")
+    put_str(bcol,     brow + 3, tail_row)
+    # Body sides.
+    for r in range(4, H - 1):
+        put_str(bcol, brow + r, side)
+    # Bottom.
+    put_str(bcol, brow + H - 1, bot)
+
+    # Text — wrap into lines, scroll if overflow.
+    text_col = bcol + 2
+    chars_per_line = max(4, W - 4)
+    text_top_row = brow + 2
+    max_lines = (H - 1) - 2   # rows 2..H-2 inclusive
+
+    lines = _wrap_text(text, chars_per_line)
+    if len(lines) > max_lines:
+        scroll = int(now_ms / 2000.0) % (len(lines) - max_lines + 1)
     else:
-        # Scroll: 1 char/100ms.
-        scroll_offset = int(now_ms / 100.0) % (len(text) - visible_chars + 1)
-        display_text = text[scroll_offset:scroll_offset + visible_chars]
-    # Wrap into lines.
-    text_color = (0x20, 0x24, 0x2C)
-    for line_ix in range(inner_h_chars):
-        chunk = display_text[line_ix * inner_w_chars:(line_ix + 1) * inner_w_chars]
-        if not chunk:
+        scroll = 0
+    for i in range(max_lines):
+        ix = scroll + i
+        if ix >= len(lines):
             break
-        draw.text((bx + 12, by + 8 + line_ix * char_h), chunk,
-                  font=font, fill=text_color)
+        put_str(text_col, text_top_row + i, lines[ix], text_color)
 
 
 def _render_landscape(state: State) -> Image.Image:

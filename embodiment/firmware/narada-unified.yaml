@@ -38,12 +38,22 @@ esphome:
     - include/sandhi_player.h
     - include/sandhi_catalog.h
   on_boot:
+    # Compositor scene init. priority -100 runs AFTER all hardware
+    # components are set up. Earlier we tried a priority 800 hook to
+    # turn on the speaker amp before audio init (the AGC droop
+    # theory) — but `output.turn_on` at priority 800 fires BEFORE
+    # the gpio output component itself is registered (priority ~700),
+    # causing a null deref panic and bootloader rollback. Discovered
+    # 2026-05-04 morning when we noticed flashes claimed success but
+    # boot timestamps stayed pinned to the last stable build.
     priority: -100
     then:
       - lambda: |-
           using namespace narada;
           comp().set_atlas(test_atlas_frames, test_atlas_pixels, TA_FRAME_COUNT);
-          comp().set_bg_color(0x18C3);
+          // Dim teal — visibly alive between turns. RGB(40, 60, 100) ~=
+          // RGB565 0x21EC. Earlier (20,20,30) read as black at a glance.
+          comp().set_bg_color(0x21EC);
           sm().apply_all();
           ESP_LOGI("comp", "boot scene staged via state machine");
 
@@ -191,11 +201,16 @@ globals:
     initial_value: '0'
 
 # I2C bus shared by audio ADC + DAC. From voice firmware.
+# Default (unnamed) I2C bus. GT911's schema does NOT expose i2c_id,
+# so it can only bind to the IMPLICIT default bus. With an explicit
+# id here, the touchscreen platform gets silently dropped at
+# validation — exactly what was happening before 2026-05-03.
+# Audio_adc and audio_dac below also bind to the default by omitting
+# i2c_id. Match the working narada-body.yaml form.
 i2c:
-  - id: i2c_adc_dac
-    scl: GPIO18
-    sda: GPIO8
-    scan: false
+  sda: GPIO8
+  scl: GPIO18
+  scan: false
 
 # SPI for the display. From embodiment firmware. No bus conflict
 # with I2C above.
@@ -203,7 +218,32 @@ spi:
   clk_pin: 7
   mosi_pin: 6
 
-# Speaker power amp enable. Matches voice firmware.
+# Touch-to-talk fallback. mWW is flaky in field conditions (RF noise,
+# distance, ambient speech), so the touchscreen is the always-works
+# input. GT911 sits on the same I2C bus declared above (SDA=8, SCL=18)
+# with INT on GPIO3. The reset line is shared with the display on
+# GPIO48, which the display block already drives — so no rst here.
+# `wake_word: "touch"` tags the turn so the bridge can distinguish
+# touch turns from real wake turns in its log.
+touchscreen:
+  - platform: gt911
+    id: narada_touch
+    interrupt_pin:
+      number: GPIO3
+      ignore_strapping_warning: true
+    display: narada_display
+    on_touch:
+      - logger.log: "touch — voice_assistant.start"
+      - voice_assistant.start:
+          wake_word: "touch"
+
+# Speaker power amp enable. Reverted to `switch:` with
+# `RESTORE_DEFAULT_ON` 2026-05-04 — the volume-research output:
+# variant with on_boot priority 800 was crashing at boot (priority
+# 800 fires before output:gpio is initialized → null deref). Whether
+# this is enough to avoid the AGC droop is unproven; the prior amp
+# theory was never actually validated because all OTAs since 05-02
+# evening had been silently rolling back via safe_mode.
 switch:
   - platform: gpio
     name: Speaker Enable
@@ -212,6 +252,20 @@ switch:
       ignore_strapping_warning: true
     restore_mode: RESTORE_DEFAULT_ON
     entity_category: config
+
+# LCD backlight on GPIO47.
+output:
+  - platform: ledc
+    pin: GPIO47
+    id: backlight_output
+    frequency: 1000Hz
+
+light:
+  - platform: monochromatic
+    id: lcd_backlight
+    name: "LCD Backlight"
+    output: backlight_output
+    restore_mode: ALWAYS_ON
 
 i2s_audio:
   - id: i2s_audio_bus
@@ -223,14 +277,12 @@ i2s_audio:
 
 audio_adc:
   - platform: es7210
-    i2c_id: i2c_adc_dac
     id: es7210_adc
     bits_per_sample: 16bit
     sample_rate: 16000
 
 audio_dac:
   - platform: es8311
-    i2c_id: i2c_adc_dac
     id: es8311_dac
     bits_per_sample: 16bit
     sample_rate: 48000
@@ -252,14 +304,32 @@ speaker:
     bits_per_sample: 16bit
     channel: left
     audio_dac: es8311_dac
-    buffer_duration: 50ms
+    # 50ms underruns trigger pipeline pause/resume cycles that look
+    # like "buffered but not playing". 100ms matches the BOX-3
+    # reference YAML.
+    buffer_duration: 100ms
 
 media_player:
   - platform: speaker
     id: box_media_player
+    # Name surfaces the entity to the API so external scripts (e.g.
+    # scripts/test_play_media.py) can call media_player.play_media
+    # without going through voice_assistant. Useful for loudness
+    # bisects.
+    name: "Narada Speaker"
+    # Volume range matches the BOX-3 reference firmware. Going above
+    # 0.8 clips against the speaker driver rails — clipped audio is
+    # compressed by the driver and ends up sounding QUIETER than
+    # clean 0.8 audio. Hard lesson from 2026-05-02 night.
+    volume_min: 0.5
+    volume_max: 0.8
+    volume_initial: 0.8
     announcement_pipeline:
       speaker: box_speaker
-      format: FLAC
+      # We serve WAV from the bridge; declaring FLAC made the
+      # decoder probe/buffer for several seconds. Match the actual
+      # served format.
+      format: WAV
       sample_rate: 48000
       num_channels: 1
 
@@ -293,6 +363,10 @@ voice_assistant:
   use_wake_word: false
   noise_suppression_level: 2
   auto_gain: 31dBFS
+  # 2.0 — matches the BOX-3 reference YAML exactly. The 1.0 we tried
+  # at 2026-05-03 was visibly quieter; reference verified to be loud
+  # under HA pipeline. With volume_max=0.8 capping the device side,
+  # this 2x stays clean of the rails.
   volume_multiplier: 2.0
   on_client_connected:
     - logger.log: "va: client_connected (pipeline subscribed)"
@@ -302,6 +376,13 @@ voice_assistant:
     - micro_wake_word.stop:
   on_start:
     - logger.log: "va: on_start"
+    # ESPHome's announcement_pipeline uses an UNBOUNDED deque for
+    # queued URLs. If a previous fetch got stuck (which can happen
+    # after socket errors / mid-playback aborts), the deque doesn't
+    # drain and new TTS sits behind it for minutes. Stopping the
+    # media_player at turn start clears the queue. Idempotent.
+    - media_player.stop:
+        id: box_media_player
   on_listening:
     - logger.log: "va: on_listening"
   on_stt_vad_start:
@@ -320,8 +401,19 @@ voice_assistant:
     - logger.log:
         format: "va: tts_start text=%s"
         args: ['x.c_str()']
+    # Note: BOX-3 reference YAML does NOT call audio_dac.set_volume
+    # here. Earlier we added it on the theory that ES8311 REG32 was
+    # mid-scale on boot — but the reference is loud without this,
+    # and writing 0xFF mid-stream may cause glitches. Removed
+    # 2026-05-03 night-3 after volume research.
   on_tts_end:
     - logger.log: "va: tts_end"
+    # Belt-and-suspenders: on_end is what *should* restart mWW, but
+    # in practice the wake stops firing after the first turn ~50% of
+    # the time. Restarting on tts_end is idempotent (mww.start no-ops
+    # if already running) and covers the case where on_end doesn't
+    # fire cleanly.
+    - micro_wake_word.start:
   on_end:
     - logger.log: "va: on_end (back to idle)"
     - micro_wake_word.start:
@@ -343,6 +435,12 @@ display:
       number: 48
       inverted: true
     invert_colors: false
+    # Don't wipe the framebuffer between renders. The compositor's
+    # whole point is to dirty-track layers and only repaint what
+    # changed; auto-clear (which is on by default) was wiping the
+    # buffer to black every cycle, so dirty layers flashed for one
+    # frame and the screen reverted to black on the next.
+    auto_clear_enabled: false
     update_interval: 33ms
     lambda: |-
       uint32_t t0 = micros();

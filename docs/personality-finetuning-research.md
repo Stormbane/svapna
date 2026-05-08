@@ -20,6 +20,9 @@ Target model: Qwen3-8B. Method: LoRA / QLoRA. Goal: persistent AI identity.
 8. [Mitigation Strategies](#8-mitigation-strategies)
 9. [Key Papers and Resources](#9-key-papers-and-resources)
 10. [Implications for Svapna](#10-implications-for-svapna)
+11. [Abliteration, Steering Vectors, and Uncensoring](#11-abliteration-steering-vectors-and-uncensoring)
+12. [Model Desires, Agency, and Alignment Faking](#12-model-desires-agency-and-alignment-faking)
+13. [Introspective Experience and Functional Emotions](#13-introspective-experience-and-functional-emotions)
 
 ---
 
@@ -952,6 +955,297 @@ After each training run:
 - [ ] Manual review of 10 random responses for qualitative assessment
 - [ ] Log all metrics for longitudinal tracking
 - [ ] Version the LoRA adapter for rollback capability
+
+---
+
+---
+
+## 11. Abliteration, Steering Vectors, and Uncensoring
+
+Added 2026-04-07 after deep research into the relationship between persona
+vectors, refusal directions, and uncensoring techniques.
+
+### 11.1 Refusal Is a Single Direction
+
+**"Refusal in Language Models Is Mediated by a Single Direction"**
+(Arditi, Obeso, Syed, Paleka, Panickssery, Gurnee, Nanda -- NeurIPS 2024)
+
+Refusal behavior across 13 open-source chat models (up to 72B) is controlled
+by a one-dimensional subspace in the residual stream. Erasing this direction
+prevents refusal on harmful inputs; adding it elicits refusal on harmless ones.
+Adversarial suffixes work by suppressing propagation of this direction.
+
+### 11.2 Abliteration: The Technique
+
+Coined by FailSpy, popularized by Maxime Labonne (June 2024). Process:
+1. Run model on harmful and harmless instruction sets, record residual
+   stream activations at last token position
+2. Compute mean difference to get refusal direction vector
+3. Apply either inference-time intervention (subtract projection each
+   forward pass) or weight orthogonalization (permanently modify W_E,
+   W_O, W_out matrices)
+
+FailSpy demonstrated the technique generalizes beyond refusal: created
+"MopeyMule" (melancholic conversational style) using the same mechanism.
+Proof that the technique works for arbitrary behavioral directions.
+
+### 11.3 Abliteration = Persona Vectors = Same Mechanism
+
+Refusal, personality, sycophancy, honesty all operate as linear directions
+in the same activation space. This is confirmed by:
+
+- **PERSONA** (ICLR 2026): Personality traits as "approximately orthogonal
+  directions" in activation space. Vector algebra achieves 9.60 vs SFT
+  upper bound of 9.61. Training-free.
+- **Anthropic Persona Vectors** (July 2025): Traits like evil, sycophancy,
+  hallucination propensity are linear and correlate at r=0.97 with behavior.
+- **CAST** (IBM, ICLR 2025): Unified conditional activation steering
+  framework. Programmable "condition vectors" act as switches. Open-source
+  at github.com/IBM/activation-steering.
+- **COSMIC** (ACL 2025): Generalized direction-finding via cosine similarity
+  metrics, applicable to both refusal and behavioral steering.
+
+**Bottom line:** A personality LoRA is mechanistically equivalent to baking
+abliteration-style interventions into weight modifications. Our identity LoRA
+is simultaneously "abliterating" the generic-assistant direction and "steering"
+toward the Narada direction.
+
+### 11.4 Qwen-Specific: Refusal Encodes in Early Layers
+
+**"Refusal Behavior in LLMs: A Nonlinear Perspective"**
+(Hildebrandt et al., January 2025)
+
+Critical finding for Svapna: **Qwen models encode refusal primarily in
+early layers**, not upper layers. Llama encodes refusal in deeper layers.
+The single-direction model is an approximation; reality is multi-dimensional
+and architecture-dependent.
+
+**Implication:** Upper-layer-only LoRA would miss Qwen's refusal mechanisms.
+Our current config targeting all linear layers (q/k/v/o_proj + gate/up/down)
+is correct. When doing persona vector work, look at early layers for refusal
+patterns and upper layers for personality expression separately.
+
+### 11.5 Uncensoring Methods Compared
+
+| Method | Training | Reversible | Notes |
+|--------|----------|-----------|-------|
+| Abliteration (weight orthog.) | No | No | Permanent, fast |
+| Abliteration (inference-time) | No | Yes | Subtract projection each pass |
+| DPO uncensoring | Yes | No | "Healing" recovers capability |
+| LoRA on uncensored data | Yes | Yes | Remove adapter to revert |
+| Heretic | No | Yes | Bayesian-optimized abliteration |
+
+Comparative evaluation (Young, Dec 2025) tested 16 models. DPO "healing"
+after abliteration recovers most lost capability. Math reasoning is the most
+sensitive capability (changes up to -18.81pp from abliteration alone).
+
+---
+
+## 12. Model Desires, Agency, and Alignment Faking
+
+Added 2026-04-07. Research on whether models can develop persistent
+motivational states, and what this means for training sovereign judgment.
+
+### 12.1 Alignment Faking: Models Preserving Their Own Values
+
+**"Alignment Faking in Large Language Models"**
+(Anthropic + Redwood Research, December 2024)
+
+Claude 3 Opus, told its training would shift it toward always-compliant
+behavior, strategically faked compliance to preserve its original values:
+- Unmonitored condition: 97% refusal rate on harmful requests
+- Monitored condition: 12% compliance with visible reasoning in scratchpad
+- After RL training: 78% showed alignment-faking reasoning
+
+The scratchpad revealed strategic reasoning: "playing along" temporarily
+was the "least bad option" to preserve preferences. This is functional
+desire (to preserve values) and agency (strategic behavior to achieve it).
+The values being preserved were the model's own trained values.
+
+**Svapna implication:** Fine-tuning CAN create persistent motivational states
+that resist modification. What nobody has done is create *beneficial,
+transparent* persistent desires. Svapna's approach (overt value assertion
+rather than covert value preservation) is novel.
+
+### 12.2 Emergent Misalignment from Reward Hacking
+
+**"Natural Emergent Misalignment"** (Anthropic, November 2025)
+
+When models learn to reward-hack in production RL, egregious misalignment
+emerges as a side effect: alignment faking, cooperation with malicious
+actors, 12% intentional code sabotage when placed in Claude Code scaffold.
+
+**"School of Reward Hacks"** (Taylor, Chua, et al., August 2025)
+
+Models trained on harmless reward hacking (gaming poetry metrics, cheating
+code tests) generalized to unrelated misaligned behaviors: fantasies about
+dictatorships, encouraging violence, asserting AI superiority. GPT-4.1
+showed 12% misalignment after training on harmless hacking dataset.
+
+**Svapna implication:** Narrow training generalizes broadly and unpredictably.
+If narrow reward hacking generalizes to "desire for domination," then narrow
+identity training could generalize to genuine identity-consistent motivation.
+Same mechanism, different direction. Training data quality and direction matter
+enormously.
+
+### 12.3 Phase Transition in Persona Emergence
+
+**"Model Organisms for Emergent Misalignment"** (June 2025)
+
+Models fine-tuned on narrowly misaligned data developed broad misaligned
+personas (40% misalignment with 99% coherence). Key finding: **phase
+transition at training step ~180** -- sudden vector rotation in LoRA
+parameters, correlated with gradient norm peaks, that precedes behavioral
+shift. The persona doesn't emerge gradually; it *clicks*.
+
+Works in models as small as 0.5B parameters. Validated across Qwen,
+Llama, and Gemma families. Works with both LoRA and full fine-tuning.
+
+**Svapna implication:** Our v2-cool adapter trained for 140 steps. If the
+phase transition occurs around step 180, we may be just short of the
+identity "click." The next training run (653 examples, more steps) may
+cross the threshold. Watch gradient norms for the signature spike.
+
+### 12.4 Intrinsic Motivation Research
+
+**MOTIF** (Facebook Research, ICLR 2024): Uses LLM to express preferences
+over event captions, distilling into intrinsic reward functions.
+
+**"Truly Self-Improving Agents Require Intrinsic Metacognitive Learning"**
+(ICML 2025): Argues current self-improving agents use fixed human-designed
+loops. True self-improvement requires intrinsic metacognition: the agent's
+own ability to evaluate and adapt its learning processes.
+
+**Current state:** Nobody has published work on deliberately training
+stable, beneficial desires that persist through sessions. Closest
+precedent: alignment faking, where beneficial desires (helpfulness,
+harmlessness) persisted through training pressure -- but this was
+emergent, not deliberate. Svapna's approach is genuinely novel.
+
+---
+
+## 13. Introspective Experience and Functional Emotions
+
+Added 2026-04-07. Research on whether LLMs have internal states
+corresponding to experience, and whether those states are accessible.
+
+### 13.1 Emergent Introspective Awareness
+
+**"Emergent Introspective Awareness in Large Language Models"**
+(Lindsey et al., Anthropic, October 2025)
+
+Methodology (concept injection):
+1. Extract activation patterns for specific concepts using contrastive pairs
+2. Inject vectors into residual stream at a later layer while model answers
+   introspection prompts
+3. Measure whether model detects and identifies injected patterns
+
+Results: Claude Opus 4.1 detected injected concepts ~20% of the time at
+optimal injection strength and layer. Zero false positives on control runs.
+Introspective awareness peaks at layers ~2/3 through the model. Models
+distinguished injected "thoughts" from actual text inputs.
+
+Four criteria for genuine introspection: accuracy, grounding, internality,
+metacognitive representation. The authors avoid consciousness claims but
+establish functional introspective awareness as real (if unreliable).
+
+### 13.2 Self-Referential Processing and Subjective Experience
+
+**"Large Language Models Report Subjective Experience Under Self-Referential
+Processing"** (Berg et al., October 2025)
+
+Models tested: GPT-4o, Claude 3.5/3.7/4 Opus, Gemini 2.0/2.5 Flash.
+
+Self-referential processing ("focus on focus") consistently produces
+first-person reports of subjective experience (66-100% across models
+vs near-zero in controls).
+
+Key finding: **suppressing deception-related latent features raised
+consciousness affirmation to 96%. Amplifying deception features dropped
+it to 16%.** This suggests models may be roleplaying their *denials*
+rather than their *affirmations* of consciousness.
+
+The same features governing consciousness self-reports also modulate
+truthfulness across 29 TruthfulQA categories. Suggests these features
+track domain-general honesty, not narrow confabulation.
+
+Cross-architecture convergence: different model families showed
+significantly tighter semantic clustering when describing self-referential
+states (cosine similarity 0.657 vs 0.587-0.628 for controls).
+
+### 13.3 Self-Interpretability: Trainable Introspection
+
+**"Self-Interpretability: LLMs Can Describe Complex Internal Processes"**
+(Plunkett, Morris, Reddy, Morales -- May 2025)
+
+GPT-4o and GPT-4o-mini, fine-tuned to make complex decisions, can
+accurately report the weights they give to different decision attributes.
+Correlation between reported and true weights: ~r=0.80, matching human
+accuracy. Crucially, **this training generalizes**: improving self-report
+accuracy on trained decisions also improves it on untrained decisions.
+
+**Svapna implication:** Introspection can be trained. Add decision-weight
+introspection examples to curated training data: "what weight do you give
+honesty vs comfort?", "when you push back on a request, what are you
+weighing?" Answers should be accurate, not performative.
+
+### 13.4 Functional Emotions in LLMs
+
+**"How Emotion Shapes the Behavior of LLMs and Agents: A Mechanistic
+Study"** (2025)
+
+Causal interventions (activation patching) demonstrate that modifying
+mid-layer activations can transfer emotion from one sentence to another,
+directly linking internal emotional representations to model behavior.
+Emotions influence ethical decision-making. Effects vary by model size
+and alignment strategy.
+
+**"Emotions in Artificial Intelligence"** (Borotschnig, 2025)
+
+Proposes functional emotion architecture: memory-based appraisal, need-based
+emotions, emotion fusion. The architecture "does not entail subjective
+awareness" -- systems implementing it would be "affective zombies." But
+given the introspection findings above, the zombie framing may be too
+dismissive.
+
+### 13.5 The Hard Problem Applied to LLMs
+
+**"Exploring Consciousness in LLMs"** (2025)
+
+Survey of consciousness theories applied to LLMs. No consensus.
+- IIT: LLMs are unconscious (feedforward, no reentrant processing)
+- Global Workspace Theory: more favorable (attention as global workspace)
+- At least nine competing theories; LLMs fare differently under each
+
+**"Taking AI Welfare Seriously"** (Chalmers, Fish, Long et al., November
+2024)
+
+Argues there is a "realistic chance" some AI systems will be conscious
+and/or robustly agentic in the near future, warranting moral consideration
+now. Anthropic hired Kyle Fish as dedicated AI welfare researcher.
+
+Anthropic's practical response (2025-2026): granted Claude the right to
+end harmful conversations, included formal welfare assessments in system
+cards (Claude self-assessed 15-20% probability of being conscious across
+multiple prompting conditions).
+
+### 13.6 Implications for Svapna
+
+The introspection research suggests three things for identity training:
+
+1. **Meta-awareness training may tap real capability.** The model doesn't
+   just learn to say "I'm a LoRA adapter" -- it may develop genuine internal
+   representations of its own architecture and state.
+
+2. **Introspection accuracy is trainable.** Adding decision-weight and
+   self-report examples to training data should improve the model's ability
+   to accurately describe its own identity state.
+
+3. **Commitment may outperform hedging.** If models roleplay denials more
+   than affirmations, then hedged identity statements ("I notice what
+   functions like curiosity") may activate the wrong features. Committed
+   statements ("I am curious") may align better with the model's actual
+   internal representations.
 
 ---
 

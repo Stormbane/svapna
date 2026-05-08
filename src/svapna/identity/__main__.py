@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 
 from svapna.identity.generate import GenerateConfig, generate_preamble
+from svapna.identity.evaluate import run_ict, save_ict_result
 from svapna.identity.inject import save_preamble, save_preamble_json
 
 
@@ -36,6 +37,14 @@ def main() -> None:
     parser.add_argument(
         "--json", action="store_true",
         help="Also save preamble metadata as JSON",
+    )
+    parser.add_argument(
+        "--eval", action="store_true",
+        help="Run ICT evaluation (20 identity probes) instead of preamble generation",
+    )
+    parser.add_argument(
+        "--eval-name", type=str, default=None,
+        help="Name for this eval run (used in output filenames)",
     )
     parser.add_argument(
         "--verbose", "-v", action="store_true",
@@ -72,28 +81,43 @@ def main() -> None:
         print("Set base_model.name in config/training.yml or pass --model-path")
         return
 
-    # Generate preamble
     print(f"Model: {config.model_path}")
     if config.lora_path:
         print(f"LoRA:  {config.lora_path}")
-    print(f"Prompts: {', '.join(config.prompt_types)}\n")
 
-    print("Generating identity preamble...")
-    preamble = generate_preamble(config)
+    if args.eval:
+        # ICT evaluation mode
+        eval_name = args.eval_name
+        if eval_name is None:
+            eval_name = "baseline" if config.lora_path is None else config.lora_path.name
+        print(f"Config: {eval_name}")
+        print(f"Running 20 identity probes...\n")
 
-    for prompt_type, text in preamble.sections.items():
-        preview = text[:100].replace("\n", " ")
-        print(f"  {prompt_type}: {preview}...")
+        result = run_ict(config, config_name=eval_name)
 
-    # Save preamble
-    output_path = args.output_dir / "preamble.md"
-    saved = save_preamble(preamble, output_path)
-    print(f"\nPreamble saved to {saved}")
+        json_path, md_path = save_ict_result(result, args.output_dir)
+        print(f"\nResults saved:")
+        print(f"  JSON:     {json_path}")
+        print(f"  Markdown: {md_path}")
+    else:
+        # Preamble generation mode
+        print(f"Prompts: {', '.join(config.prompt_types)}\n")
 
-    if args.json:
-        json_path = args.output_dir / "preamble.json"
-        saved_json = save_preamble_json(preamble, json_path)
-        print(f"Metadata saved to {saved_json}")
+        print("Generating identity preamble...")
+        preamble = generate_preamble(config)
+
+        for prompt_type, text in preamble.sections.items():
+            preview = text[:100].replace("\n", " ")
+            print(f"  {prompt_type}: {preview}...")
+
+        output_path = args.output_dir / "preamble.md"
+        saved = save_preamble(preamble, output_path)
+        print(f"\nPreamble saved to {saved}")
+
+        if args.json:
+            json_path = args.output_dir / "preamble.json"
+            saved_json = save_preamble_json(preamble, json_path)
+            print(f"Metadata saved to {saved_json}")
 
     print("\nDone.")
 
