@@ -16,18 +16,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-voice = [
-    "sounddevice>=0.4",
-    "faster-whisper>=1.0",
-    "aioesphomeapi>=24.0",
-    "aiohttp>=3.9",
-    "numpy",
-    "piper-tts>=1.2",
-    "silero-vad>=6.0",
-    "kokoro-onnx>=0.4",
-    "wyoming>=1.5",
-    "psutil>=5.9",
-]
+# Voice / embodiment dependencies moved to deha (github.com/Stormbane/deha)
+# during the 2026-05-09 project decomposition. Install deha directly when
+# you need them.
 train = [
     "torch>=2.1",
     "transformers>=4.40",

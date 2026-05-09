@@ -46,9 +46,26 @@ See [architecture docs](docs/) and [spec](.ai/knowledge/spec.md) for details.
 
 ## Status
 
-Early development. The consolidation pipeline (conversation ingestion + memory
-file conversion) is functional. Dream generation, training, and evaluation are
-in progress.
+Active development. Consolidation, dream generation, ORPO + ritual refusal
+pair training, and the summoning-test eval are in place. svapna is narrowly
+the *training judge module* of a larger ecosystem — see Sibling Projects below.
+
+## Sibling Projects
+
+Svapna does one job: produce a viveka LoRA. The runtime, body, and memory
+infrastructure live in dedicated repos:
+
+- **[smriti](https://github.com/Stormbane/smriti)** — memory tree + MCP server
+  + sleep/cascade. Where Narada's experience accumulates and is searched.
+- **[deha](https://github.com/Stormbane/deha)** — the body. ESP32-S3-BOX-3
+  firmware, voice brain server, expression engine, and the `deha_client`
+  library other projects use to reach the body.
+- **prana** *(extracting)* — runtime shell on Hermes Agent. Configuration +
+  Narada-specific skills (DESIRE / PLAN / JUDGE / EXECUTE / REFLECT) wrapping
+  svapna's viveka output as a frontier-model gate.
+
+See [docs/plans/project-decomposition-2026-05-09.md](docs/plans/project-decomposition-2026-05-09.md)
+for the architecture across projects.
 
 ## Requirements
 
