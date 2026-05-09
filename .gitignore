@@ -36,6 +36,7 @@ Thumbs.db
 # Models (too large for git)
 models/base/
 models/lora/
+models/kokoro/
 
 # Data — local only (raw conversations + experiment outputs may contain private content)
 data/

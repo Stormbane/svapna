@@ -132,10 +132,14 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     default_transition_length: 250ms
 
+# Default (unnamed) I2C bus, shared by audio codecs and the GT911
+# touchscreen. The touchscreen schema does NOT expose i2c_id, so it
+# can only bind to the implicit default bus — every i2c device on
+# this YAML must drop its i2c_id and bind here.
 i2c:
-  - id: i2c_adc_dac
-    scl: GPIO18
-    sda: GPIO8
+  sda: GPIO8
+  scl: GPIO18
+  scan: false
 
 i2s_audio:
   - id: i2s_audio_bus
@@ -147,14 +151,12 @@ i2s_audio:
 
 audio_adc:
   - platform: es7210
-    i2c_id: i2c_adc_dac
     id: es7210_adc
     bits_per_sample: 16bit
     sample_rate: 16000
 
 audio_dac:
   - platform: es8311
-    i2c_id: i2c_adc_dac
     id: es8311_dac
     bits_per_sample: 16bit
     sample_rate: 48000
@@ -229,9 +231,12 @@ media_player:
 micro_wake_word:
   id: mww
   models:
+    # `okay_nabu` is the primary wake — eventually swap for `hey_narada`
+    # once we've trained a custom mWW model. We deliberately do NOT
+    # carry a 'stop' model here: mWW cannot run during TTS playback on
+    # the BOX-3 (i2s bus contention with the speaker), so the interrupt
+    # path goes through the GT911 touchscreen instead.
     - okay_nabu
-    - hey_mycroft
-    - hey_jarvis
   on_wake_word_detected:
     - voice_assistant.start:
         wake_word: !lambda return wake_word;
@@ -769,6 +774,49 @@ spi:
   - id: spi_bus
     clk_pin: 7
     mosi_pin: 6
+
+# GT911 touchscreen as the contextual interrupt surface. mWW cannot
+# run during TTS on this hardware, so voice-domain barge-in is
+# blocked; touch is independent of the i2s audio bus and fires
+# cleanly during TTS playback. INT on GPIO3, reset shared with the
+# display on GPIO48 (already driven by the display block — don't
+# declare it again here). One tap is contextual:
+#   idle      -> start a turn (same as 'okay nabu')
+#   listening -> cancel listen, return to idle
+#   thinking  -> abort the turn
+#   replying  -> cancel TTS, return to idle
+touchscreen:
+  - platform: gt911
+    id: box_touch
+    interrupt_pin:
+      number: GPIO3
+      ignore_strapping_warning: true
+    display: s3_box_lcd
+    on_touch:
+      - logger.log:
+          tag: narada
+          level: INFO
+          format: "touch event"
+      - if:
+          condition:
+            or:
+              - voice_assistant.is_running:
+              - media_player.is_announcing:
+          then:
+            - if:
+                condition:
+                  media_player.is_announcing:
+                then:
+                  - media_player.stop:
+                      announcement: true
+            - if:
+                condition:
+                  voice_assistant.is_running:
+                then:
+                  - voice_assistant.stop:
+          else:
+            - voice_assistant.start:
+                wake_word: "touch"
 
 display:
   - platform: mipi_spi

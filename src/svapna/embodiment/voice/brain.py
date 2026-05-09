@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import tempfile
 import time
 from typing import Protocol
 
@@ -41,9 +42,16 @@ class ClaudeCodeBrain:
         "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Task,NotebookEdit"
     )
 
-    def __init__(self, system_prompt: str, conversation_window_s: float = 30.0):
+    # Sonnet 4.6 is the balance for voice: sharper persona than Haiku,
+    # ~2-3x faster than Opus, similar effective latency under the
+    # subscription/subprocess constraint (subprocess startup dominates).
+    DEFAULT_MODEL = "sonnet"
+
+    def __init__(self, system_prompt: str, conversation_window_s: float = 30.0,
+                 model: str = DEFAULT_MODEL):
         self.system_prompt = system_prompt
         self._window_s = conversation_window_s
+        self._model = model
         self._session_id: str | None = None
         self._last_turn_at: float = 0.0
 
@@ -51,18 +59,36 @@ class ClaudeCodeBrain:
         now = time.monotonic()
         cmd = [
             "claude", "-p",
+            "--model", self._model,
             "--system-prompt", self.system_prompt,
+            # Strip everything claude-cli would otherwise inject into the
+            # context: user CLAUDE.md, project CLAUDE.md, local settings,
+            # auto-memory MEMORY.md, and per-machine sections (cwd, env,
+            # git, memory paths). Without these flags the brain treats
+            # itself as "a software engineer in the svapna repo" and
+            # leaks HA-assist phrasing (shopping list, lights) into voice
+            # replies, drowning out narada-voice.md.
+            "--setting-sources", "",
+            "--exclude-dynamic-system-prompt-sections",
             "--output-format", "json",
             "--disallowedTools", self.DISALLOWED_TOOLS,
         ]
         if self._session_id is not None and (now - self._last_turn_at) < self._window_s:
             cmd += ["--resume", self._session_id]
 
+        # Run from a neutral cwd so claude-cli doesn't auto-discover the
+        # project CLAUDE.md (which says "svapna AI dreaming system..." and
+        # pulls the brain into a software-engineering context). The
+        # user-global ~/.claude/CLAUDE.md still loads (no flag suppresses
+        # it without --bare, which requires API-key auth not subscription),
+        # but its content is about smriti / memory tools, not HA voice
+        # assist phrasing.
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=tempfile.gettempdir(),
         )
         stdout, stderr = await proc.communicate(input=user_text.encode("utf-8"))
         if proc.returncode != 0:
