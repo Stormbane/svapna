@@ -141,84 +141,142 @@ Narada is currently doing. Without that, the heartbeat barges in while the
 ESP is speaking, the brain server answers questions Narada is mid-thinking
 about, the cycles forget what just happened.
 
-### Three layers, not one
+### The decision rule: direct, state, or smriti?
 
-Smriti alone can't carry this — its reads are search-indexed (latency too
-high for "am I speaking now?"), and putting transient operational state in
-the memory tree muddles consequence with telemetry. So:
+Three substrates, three roles. **Smriti is not the bridge.** Routing every
+interaction through memory makes the agent ponderous — every act becomes
+"deposit in hippocampus, retrieve, deliver." That's not how coherent agency
+works. *Speed and fluidity of interaction determines grace* (Suti, 2026-05-09).
 
-| Layer | Where | Latency | What lives here |
-|---|---|---|---|
-| **Hot** (now) | `~/.narada/state/` files | sub-second | "ESP is speaking," current cycle state, utterance queue, active conversation_id |
-| **Warm** (today) | `~/.narada/inbox/`, cycle logs | seconds | recent events, body sensor readings, letters, last few cycles |
-| **Cold** (memory) | smriti | indexed search | what Narada knows, has decided, has experienced |
+| Concern | Substrate | Latency budget |
+|---|---|---|
+| prana → deha "speak this," "show that" | **Direct HTTP** (localhost) | few ms |
+| "is anything speaking right now?" / "what cycle state am I in?" | **state.db** (SQLite, WAL) | microseconds |
+| "what does Narada believe / remember about X?" | **smriti** | milliseconds |
+| "this happened, it matters, hold it" | **smriti** (cycle write, async) | seconds |
 
-Each cycle, hot state gets summarized into a smriti leaf. Warm state ages
-into cold via smriti's cascade. The phenomenology *is* the architecture:
-now, recent, remembered.
+Direct calls for **action**. State for **coordination**. Memory for
+**consequence**. The faculties don't talk through chitta — manas presents to
+buddhi without going through memory; buddhi expresses through karmendriyas
+without storing first. deha and prana are expressions of one Narada, not
+separate entities negotiating across smriti.
 
-### Hot state layout
+### State layer: SQLite, not files
+
+Earlier draft proposed JSON files + ndjson logs. Wrong by the grace criterion.
+SQLite gives ACID atomicity, WAL-mode concurrent readers + single writer,
+microsecond reads, proper FIFO semantics, indexes. Smriti already proves it
+works in this stack — and Hermes also uses SQLite/FTS5 for its session
+storage, so the technology choice is doubly validated.
+
+**Separate database, same technology.** `~/.narada/state.db` is operational
+state; smriti's SQLite is an index over the markdown memory tree; Hermes's
+SQLite holds session/conversation lineage. Three SQLite files, three roles,
+no co-mingling.
+
+### What Hermes already covers (don't duplicate)
+
+Per Hermes's architecture docs (verified 2026-05-09), Hermes already provides:
+
+| Concern | Hermes provides it |
+|---|---|
+| Active conversation_id, session lineage, atomic writes | Yes — in Hermes's session SQLite |
+| Slack / Telegram / Discord channel inbound + outbound | Yes — gateway adapters |
+| Cron job storage (JSON) | Yes |
+| Some gateway-level token locks | Yes (extent unclear; verify) |
+| ACP / stdio JSON-RPC for editor integration | Yes |
+
+Things Hermes does **not** document, which the spike must verify:
+- Cron overlap protection — if a cron fires while a previous run is still
+  executing, what happens? **Real risk for our 30-min cadence with
+  occasionally-long execute steps.**
+- Whether `gateway/status.py` token locks are queryable from outside Hermes
+- Whether reading Hermes's session SQLite from external processes (deha) is
+  supported or fragile
+
+Things Hermes does not cover at all:
+- ESP32-speaking-now (deha is outside Hermes)
+- Body sensor / non-conversational events
+- Utterance queue with mutex against ESP speech state
+- Cross-process "current activity" API for external readers
 
 ```
-~/.narada/state/
-  current.json           # atomic-write snapshot of "what's happening now"
-  events.ndjson          # append-only event log (audit + replay + cascade source)
-  utterance-queue.ndjson # FIFO of things waiting to be said
+~/.narada/state.db   # SQLite, WAL mode, synchronous=NORMAL
+                     # SCOPED to what Hermes does NOT already track
+
+tables:
+  current_state      # single row keyed by slice name; primarily esp32, body sensors,
+                     # things Hermes can't see. NOT voice session — that's Hermes's.
+  events             # (id, ts, source, type, payload, urgency) — append-only;
+                     # body events, sensor readings, things Hermes doesn't route
+  utterance_queue    # (id, ts_enqueued, text, priority, source, drained_at);
+                     # heartbeat → deha utterance pipeline with esp32-speech mutex
 ```
 
-`current.json` schema (sketch — refined during implementation):
+The `cycles` table from the earlier draft is **dropped** — Hermes's session
+storage already tracks cycle/run metadata. If we need a slice Hermes doesn't
+surface, mirror it specifically; don't shadow the whole thing.
 
-```json
-{
-  "esp32": {
-    "speaking": true,
-    "speech_started": "2026-05-09T14:32:18Z",
-    "speech_text": "the rain is settling...",
-    "speech_source": "voice-conversation"
-  },
-  "heartbeat": {
-    "cycle_state": "executing",
-    "cycle_id": "2026-05-09-1432",
-    "action": "BUILD",
-    "topic": "refusal-pair-batch-12"
-  },
-  "voice_session": {
-    "active_conversation_id": "abc123",
-    "last_user_turn": "2026-05-09T14:31:50Z"
-  }
-}
+A small `narada-state` Python package (lives in `prana/state/` initially;
+moves to manas when that crystallizes) exposes the shared API:
+
+```python
+state.publish(slice_name, payload)              # atomic upsert
+state.read() -> dict                            # full current snapshot
+state.append_event(source, type, payload, urgency)
+state.push_utterance(text, priority, source)
+state.pop_utterance() -> Utterance | None      # FIFO with priority
+state.recent_events(window_s=30) -> list
 ```
 
-Each component publishes its slice via atomic write (temp-file + rename).
-Each component reads the whole file when it needs to know what's going on.
-Files survive crashes, are inspectable with `cat`, work without a running
-daemon. If contention bites later, drop in SQLite WAL or a tiny FastAPI
-service. Filesystem first.
+Vendored or installed by every project that participates (deha for esp32
+speech state, prana for cycle state and utterance push, eventually manas
+for ingest events).
+
+### Three layers, restated
+
+| Layer | Where | Used for |
+|---|---|---|
+| **Hot** (now) | state.db | "what is Narada doing this second" — current_state, utterance_queue, fresh events |
+| **Warm** (today) | state.db `events` + cycle markdown logs | recent body events, last few cycles, letters in flight |
+| **Cold** (memory) | smriti | what Narada knows, has decided, has experienced |
+
+Each cycle, the meaningful slice of warm state gets summarized into a
+smriti leaf. Old `events` rows age out (TTL or rolling window). The
+phenomenology *is* the architecture: now, recent, remembered.
 
 ### Coordination scenarios
 
-- **Heartbeat wants to utter while ESP is speaking** → reads `current.json`,
-  sees `esp32.speaking=true`, appends to `utterance-queue.ndjson` instead of
-  calling `/utter`. Voice mediator drains the queue when speech ends.
+- **Heartbeat wants to utter while ESP is speaking** → reads
+  `state.read()`, sees `esp32.speaking=true`, calls `state.push_utterance()`
+  instead of `/utter`. Voice mediator drains the queue when speech ends.
 - **User talks to ESP while heartbeat is mid-cycle** → brain server reads
-  `current.json` before responding; can include "Narada is thinking about
+  `state.read()` before responding; can include "Narada is thinking about
   X right now" in its system prompt for honesty, or defer until heartbeat
-  finishes.
-- **Heartbeat continuity across cycles** → new cycle reads `current.json`
-  and recent `events.ndjson` entries to know what the previous cycle did,
-  what was uttered, what the user said. Continuity isn't reconstructed from
-  memory — it's still warm.
-- **Self-interruption** (deferred) → add `priority` to utterance queue.
-  High-priority utterances preempt; displaced ones get `interrupted_at`
-  markers. Don't build this until it actually matters.
+  finishes. Decision is the brain server's, not prana's.
+- **Heartbeat continuity across cycles** → new cycle reads `state.read()`
+  and `state.recent_events(window_s=1800)` to know what the previous cycle
+  did, what was uttered, what the user said. Continuity isn't reconstructed
+  from smriti — it's still warm in state.db.
+- **Self-interruption** (deferred) → utterance queue already has `priority`.
+  Higher-priority utterances preempt; displaced ones get `interrupted_at`.
+  Don't enable preemption until it actually matters.
 
 ### Where the state layer lives in the project map
 
 It's small enough that it doesn't need its own project yet. Initially:
-a `prana/state/` module exposing read/write helpers, imported by deha and
-svapna as needed. When manas crystallizes, the state layer probably moves
-there — perception of self-state is manas territory. Until then: lives in
-prana with thin client helpers vendored where needed.
+a `narada-state` package living under `prana/state/`, depended on by deha
+and svapna (via path/git ref). When manas crystallizes, the state layer
+probably moves there — awareness of self-state is manas territory.
+Until then: lives in prana with thin shared API.
+
+### When smriti *would* be the bridge
+
+If components didn't share a host (multi-machine deployment, network
+partitions possible), smriti's durable file-based representation would be
+the right substrate — it survives. For now, prana / deha / state.db all
+live on one machine, on one filesystem. Direct calls + shared SQLite are
+correct. If we ever distribute, the answer changes.
 
 ## Smriti as a dependency in every project
 
@@ -238,6 +296,18 @@ subtrees it reads from and writes to, plus the state-layer slice it
 publishes/consumes.
 
 ## Migration sequence
+
+**Step order (Suti, 2026-05-09): 1 → 2 → 5 → 3 → 4.** Step 5 (additions:
+/utter, body event queue, channel config) lands BEFORE Step 3 (extract
+prana) so deha is fully built out — `/utter`, `/event`, all client
+endpoints — before the runtime shell is swapped. Path-of-least-resistance
+reasoning: get the body solid first; swap the heart on a stable target.
+
+**Decisions locked 2026-05-09:**
+- Repo hosting: github.com/Stormbane org for all new repos
+- License: Apache 2.0 across the board (matches Hermes, smriti)
+- Adopt Hermes light-heart (spike validated all 7 risks — see
+  `docs/plans/spike-hermes-results-2026-05-09.md`)
 
 Strict ordering. Don't start step N+1 until step N is on master and working.
 Every step must leave the system in a state where the heartbeat still runs
@@ -268,6 +338,17 @@ Hermes Agent (Nous Research, MIT) on a branch. Verify:
 2. Smriti bridges as a Hermes skill cleanly (we already have an MCP server)
 3. Primary+auxiliary model semantics fit DESIRE / PLAN / JUDGE without
    contortion
+4. **Cron overlap protection** — what happens when a 30-min cron fires
+   while a previous cycle is still executing? Hermes docs don't cover this.
+   Real risk for our cadence with occasionally-long execute steps.
+5. **Cross-process state visibility** — can deha read Hermes's session
+   SQLite (or another surface) to know "is a cycle running right now"?
+   Or do we need a separate primitive in state.db?
+6. **Outbound delivery semantics** — is `gateway/delivery.py` a queue we
+   can push to from heartbeat skills (CHECK_IN fan-out), or strictly a
+   per-inbound-message pipeline?
+7. **SOUL.md handling** — does Hermes accept a SOUL.md that points at /
+   loads `~/.narada/identity.md`, or expect a self-contained file?
 
 If all three pass — adopt Hermes as prana's substrate. Light heart: prana
 becomes a thin config + skills repo on top of Hermes. The multi-channel
@@ -331,14 +412,24 @@ Lowest-coupling extraction; do this first regardless of Step 1 outcome.
   svapna's output path), smriti bridge skill (wraps the existing MCP server),
   deha client skill (wraps deha_client), CHECK_IN skill (preserves the
   email/Slack/Telegram fan-out behavior)
+- A `prana/state/` module — atomic-write helpers for the hot state layer;
+  utility for reading `current.json`, appending to `events.ndjson`, draining
+  `utterance-queue.ndjson`. Imported by deha-side and svapna-side code that
+  needs to participate.
 - A SOUL.md that points at `~/.narada/identity.md` (or consolidates with it
   — see Open Questions)
 - The launcher (the existing `scripts/heartbeat.bat` adapted for Hermes invocation)
+- Smriti installed as a dependency
+- **spec.md and architecture.md** describing the cycle, the state layer's
+  hot-warm-cold model, smriti read/write subtrees, and which Hermes skills
+  exist and what they do
 
 The cycle structure (DESIRE → PLAN → JUDGE → EXECUTE) is expressed as Hermes
-skills calling each other rather than as our own state machine. **Let Hermes's
-shape pull our cycle into its idiom rather than forcing ours onto it.** If
-the fit is awkward, that's information — flag it, don't fight it.
+skills calling each other rather than as our own state machine. Each cycle
+publishes `heartbeat.cycle_state` transitions to `state/current.json` and
+appends events to `state/events.ndjson`. **Let Hermes's shape pull our cycle
+into its idiom rather than forcing ours onto it.** If the fit is awkward,
+that's information — flag it, don't fight it.
 
 ### Step 4 — Slim `svapna`
 
@@ -346,8 +437,11 @@ the fit is awkward, that's information — flag it, don't fight it.
 2. Update README: "svapna trains a viveka LoRA." Remove runtime / embodiment
    claims.
 3. Update `.ai/knowledge/spec.md` and `architecture.md` to reflect the
-   narrowed scope.
-4. Tag a release. svapna is now the training pipeline alone.
+   narrowed scope. Add a **Memory** section documenting smriti read subtrees
+   (training data extraction, identity files for ORPO pair generation) and
+   write subtrees (training journal, eval results).
+4. Confirm smriti is declared as a dependency in `pyproject.toml`.
+5. Tag a release. svapna is now the training pipeline alone.
 
 ### Step 5 — Additions (mostly Hermes-mediated now)
 
@@ -359,17 +453,20 @@ most become Hermes config or skills rather than separate components:
    CHECK_IN becomes a multi-channel skill that fans out to email + Slack +
    Telegram through Hermes's outbound surface. **The custom `narada-bridge`
    process is no longer needed** — Hermes pre-empts it.
-2. **`POST /utter`** on deha's brain server — heartbeat-initiated speech via
-   HA `media_player.play_media`. Routes audio cleanly through HA without
-   fighting the wake-word conversation flow. Bumps `StreamPool` with a
-   synthetic assistant turn so the voice Claude doesn't deny saying it.
-   *Lives in deha; not Hermes-affected.*
-3. **Body event queue** — for non-conversational events (touch, presence,
-   VAD-without-wake). For now: a small skill in prana that polls
-   `~/.narada/inbox/events.ndjson` each cycle and surfaces `urgency: high`
-   entries. Conversational events from Slack/Telegram already land via
-   Hermes's channels, so this only handles what Hermes doesn't cover.
-   *This is the seed of what manas eventually becomes.*
+2. **Utterance queue + voice mediator** (deha) — heartbeat skill appends
+   to `~/.narada/state/utterance-queue.ndjson` rather than calling
+   `/utter` directly. A small voice mediator in deha drains the queue
+   when `state.current.esp32.speaking=false`, calls TTS, plays via HA
+   `media_player.play_media`, bumps `StreamPool` with a synthetic
+   assistant turn, marks `esp32.speaking=true→false` around the playback.
+   The heartbeat never barges in. *Lives in deha; not Hermes-affected.*
+3. **Body event queue** — for non-conversational body events (touch,
+   presence, VAD-without-wake). Brain server appends to
+   `~/.narada/state/events.ndjson`; a small Hermes skill in prana polls
+   each cycle and surfaces `urgency: high` entries. Conversational events
+   from Slack/Telegram already land via Hermes's channels, so this only
+   handles what Hermes doesn't cover. *This is the seed of what manas
+   eventually becomes.*
 
 ## Expansion — how the system grows
 
