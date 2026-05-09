@@ -16,19 +16,24 @@ Two phases:
 - execute_plan: full tools enabled within the boundaries described in
   EXECUTOR_BOUNDARIES below. Claude actually does the work.
 
-Billing depends on how `claude` is logged in on the Windows user account
-that runs the heartbeat launcher. If the launcher environment has no
-`ANTHROPIC_API_KEY` set, `claude -p` uses the credentials in
-`~/.claude/.credentials.json` — i.e., Suti's Claude Code Max subscription
-(free). If `ANTHROPIC_API_KEY` IS set in the launcher env, it overrides
-the subscription and every call is billed to API credit. This happened
-silently on 2026-04-11 and cost ~$22.63 before we caught it; see
-`.ai/logs/errors.md` and `scripts/heartbeat.bat.example` for details.
+Billing mode is determined by `claude auth status`, NOT by `cost_usd` in
+the response. If the launcher environment has no `ANTHROPIC_API_KEY` set,
+`claude -p` uses the OAuth credentials in `~/.claude/.credentials.json`
+(Suti's Claude Code Max subscription) and bills against the weekly/5-hour
+plan limits, not per-token. If `ANTHROPIC_API_KEY` IS set in the launcher
+env, it overrides OAuth and every call is billed to API credit (this
+happened silently on 2026-04-11 and cost ~$22.63 before we caught it;
+see `.ai/logs/errors.md` for the prior incident).
 
-To know which mode you are actually in at runtime, watch `cost_usd` in
-the `Plan` / `ExecutionResult` returned from each call: 0.00 means Max,
-anything non-zero means API. Each call also has a hard `--max-budget-usd`
-cap as a safety net, and runs with `--no-session-persistence` so
+`cost_usd` in the Plan / ExecutionResult is **informational** — Anthropic
+displays it across all auth modes for transparency, including Max
+subscribers (per code.claude.com/docs/en/costs). Non-zero cost_usd does
+NOT indicate API billing. To verify billing mode, run:
+
+    claude auth status --text
+
+Each call also has a hard `--max-budget-usd` cap as a safety net (mostly
+relevant under API billing) and runs with `--no-session-persistence` so
 heartbeats stay isolated.
 
 The boundaries are communicated via `--append-system-prompt` rather than
