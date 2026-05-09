@@ -21,7 +21,7 @@ from pathlib import Path
 
 from svapna.heartbeat.daemon import HeartbeatDaemon, DEFAULT_INTERVAL
 from svapna.heartbeat.delegate import ClaudeDelegate
-from svapna.heartbeat.display import DisplayClient
+from deha.display import DisplayClient
 from svapna.heartbeat.viveka import VivekaCore
 from svapna.heartbeat.wake import WAKE_PATH, WakeManifestError, load_manifest
 
